@@ -657,7 +657,7 @@
             const th = document.createElement('th');
             th.className = 'eh-fav-archiver-col';
             th.setAttribute('data-eh-archiver-injected', '1');
-            th.textContent = '下载';
+            th.textContent = 'Download';
             tr.appendChild(th);
           }
           continue;
