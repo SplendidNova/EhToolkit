@@ -92,6 +92,24 @@ body {
   border-color: rgba(148, 163, 184, 0.25);
 }
 
+.badge.ok {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+  border-color: rgba(16, 185, 129, 0.45);
+}
+
+.badge.warn {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.45);
+}
+
+.badge.err {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+  border-color: rgba(239, 68, 68, 0.45);
+}
+
 .hint-text {
   font-size: 11px;
   color: #34d399;

@@ -296,6 +296,7 @@ body {
 }
 
 input[type="text"],
+input[type="password"],
 input[type="number"],
 select {
   background: #0f172a;
@@ -308,10 +309,72 @@ select {
 }
 
 input[type="text"]:focus,
+input[type="password"]:focus,
 input[type="number"]:focus,
 select:focus {
   border-color: var(--primary);
 }
+
+.cookie-pill {
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid rgba(59, 130, 246, 0.45);
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+  transition: opacity 0.15s ease, transform 0.1s ease;
+}
+
+.cookie-pill:hover {
+  opacity: 0.9;
+}
+
+.cookie-pill.status-ok {
+  border-color: rgba(16, 185, 129, 0.55);
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+}
+
+.cookie-pill.status-warn {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+}
+
+.cookie-pill.status-err {
+  border-color: rgba(239, 68, 68, 0.55);
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+}
+
+.cookie-status-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cookie-status-strip .mini-stat strong {
+  font-size: 13px;
+}
+
+.cookie-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.shortcut-row input.cookie-raw-input {
+  text-align: left;
+  font-weight: 400;
+  color: var(--text);
+  cursor: text;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.text-amber { color: #fbbf24; }
 
 .progress-box {
   margin-bottom: 14px;

@@ -1,6 +1,6 @@
 # EH Toolkit - E-Hentai / ExHentai 浏览器辅助插件 (Manifest V3)
 
-适用于 **Windows / macOS / Linux** 上的 Chrome、Edge 及 Chromium 内核浏览器的 Manifest V3 扩展程序，集成了收藏夹跨账号迁移、标签去重与自定义重点标签统计、外部链接自动跳转镜像站/表里站目标域名转换、以及快捷键复制转换画廊链接域名功能。所有功能与运行参数均已分离至 `settings.json`，并支持独立开关控制。
+适用于 **Windows / macOS / Linux** 上的 Chrome、Edge 及 Chromium 内核浏览器的 Manifest V3 扩展程序，集成了 **ExHentai 里站 Cookie 同步与管理**、收藏夹跨账号迁移、标签去重与自定义重点标签统计、外部链接自动跳转镜像站/表里站目标域名转换、以及快捷键复制转换画廊链接域名功能。所有功能与运行参数均已分离至 `settings.json`，并支持独立开关控制。
 
 ## 核心功能
 
@@ -21,6 +21,12 @@
 4. **快捷键复制转换域名 & 外链表里站目标域名转换（功能 4）**
    - **快捷键复制换域名（默认总是输出 `exhentai.org`）**：支持「总是转为 `exhentai.org`」、「总是转为 `e-hentai.org`」或「双向互转」。按下快捷键（默认 `Alt + C`）即可将转换后链接写入剪贴板。
    - **外链表里站目标域名转换（默认总是使用 `exhentai.org`）**：支持单向固定目标域名或双向互转（双向模式下通过「仅外部/新入口触发」防止站内点击反复翻转）。
+
+5. **ExHentai 里站 Cookie 管理与里站限定画廊通行（新增）**
+   - **表里站自动同步与防白屏**：自动（或一键）将 `e-hentai.org` 已登录的 `ipb_member_id`、`ipb_pass_hash`、`igneous`、`sk` 同步至 `.exhentai.org`，并自动清理触发白屏的 `yay` 与无效 `igneous=mystery` 缓存。
+   - **手动导入 / 粘贴配置**：支持直接粘贴整段 Cookie 字符串、DevTools 复制行或 JSON 自动识别填入；针对使用日本/共享代理节点需要固定 `igneous` 通行证的场景，可持久保存并一键写入浏览器。
+   - **表站不可见画廊自动跳里站**：打开 `e-hentai.org` 上的里站限定画廊遇到 *"This gallery has been removed or is unavailable."* 时，自动确保 Cookie 就绪并跳转至 `exhentai.org`（或配置的镜像站）查看。
+   - **全链路带 Cookie 请求**：收藏夹跨账号读取/导入、以及标签统计 `exhentai.org/api.php` 调用均自动携带里站 Cookie，防止漏读里站限定画廊或元数据缺失。
 
 ## 配置文件说明 (`settings.json`)
 
@@ -43,6 +49,7 @@
 | `shortcutCopy` | `copyTargetDomain`, `mirrorCopyTarget`, `customShortcut`, `copyDedupWindowMs`, `toastDurationMs`, `toastErrorDurationMs`, `badgeClearDelayMs` | 页面快捷键组合、复制目标域名、提示横幅与扩展角标停留时长 |
 | `favorites` | `defaultActiveSite`, `readDelayMs`, `readDelayMinMs`, `importDelayMs`, `importDelayMinMs`, `importReverseOrder`, `importSkipExisting`, `importSaveEveryN`, `favPreviewLimit` | 默认操作站点、收藏夹读取/导入请求间隔、倒序与断点续传策略、预览条数上限 |
 | `tagStats` | `officialApiUrl`, `apiBatchSize`, `tagDelayMs`, `tagDelayMinMs`, `tagCooldownEveryBatches`, `tagCooldownExtraMs`, `highlightTags`, `highlightTagLabel` | 官方 API 地址、每批查询数量、防风控批次冷却参数、自定义重点统计标签及显示名称 |
+| `cookies` | `enableExCookieManager`, `autoSyncEhToExCookie`, `syncCookieToMirror`, `preferExhentaiApi`, `autoRedirectUnavailableToEx`, `exCookieMemberId`, `exCookiePassHash`, `exCookieIgneous`, `exCookieSk` | ExHentai 里站 Cookie 自动同步、手动通行证配置、镜像站透传、里站 API 优先策略与表站不可见自动跳转 |
 | `tester` | `sampleGalleryPath` | 控制台实时 URL 测试器的示例画廊路径 |
 
 > **注**：仅浏览器地址栏焦点下的「浏览器级全局快捷键初始建议值 (`Alt+C`)」受限于 Manifest V3 规范需静态声明在 `manifest.json` 的 `commands` 字段中，安装后可在 `chrome://extensions/shortcuts` 中自由修改。
@@ -53,5 +60,5 @@
    - Chrome: `chrome://extensions/`
    - Edge: `edge://extensions/`
 2. 打开右上角 **开发者模式 (Developer mode)**。
-3. 点击 **加载已解压的扩展程序 (Load unpacked)**，选择本插件目录 `eh-toolkit-extension`。
+3. 点击 **加载已解压的扩展程序 (Load unpacked)**，选择本插件目录 `EhToolkit`。
 4. （可选）如需在鼠标焦点位于浏览器地址栏时直接触发复制转换域名，请访问 `chrome://extensions/shortcuts`（Edge 为 `edge://extensions/shortcuts`）设置全局快捷键。

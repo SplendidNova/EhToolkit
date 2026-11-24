@@ -22,6 +22,9 @@
     currentUrlText: document.getElementById('currentUrlText'),
     convertedUrlText: document.getElementById('convertedUrlText'),
     quickCopyBtn: document.getElementById('quickCopyBtn'),
+    popupCookieDesc: document.getElementById('popupCookieDesc'),
+    popupCookieBadge: document.getElementById('popupCookieBadge'),
+    popupSyncCookieBtn: document.getElementById('popupSyncCookieBtn'),
     enableFavTransfer: document.getElementById('enableFavTransfer'),
     enableTagStats: document.getElementById('enableTagStats'),
     tagStatsPopupDesc: document.getElementById('tagStatsPopupDesc'),
@@ -188,8 +191,53 @@
     window.close();
   }
 
+  async function refreshPopupCookieStatus() {
+    if (!els.popupCookieBadge || !els.popupCookieDesc) return;
+    const resp = await sendMessage({ type: 'EH_GET_COOKIE_STATUS' });
+    const st = resp && resp.cookieStatus;
+    if (!st || !st.supported) {
+      els.popupCookieBadge.textContent = '待重载';
+      els.popupCookieBadge.className = 'badge warn';
+      els.popupCookieDesc.textContent = '请在扩展管理页点击刷新启用 cookies 权限';
+      return;
+    }
+
+    if (st.state === 'ready_full') {
+      els.popupCookieBadge.textContent = '已就绪';
+      els.popupCookieBadge.className = 'badge ok';
+      els.popupCookieDesc.textContent = `UID ${st.ex.memberId} · 含有效 igneous`;
+    } else if (st.state === 'ready_basic') {
+      els.popupCookieBadge.textContent = '已登录';
+      els.popupCookieBadge.className = 'badge ok';
+      els.popupCookieDesc.textContent = `UID ${st.ex.memberId} · 里站已授权`;
+    } else if (st.state === 'can_sync_from_eh') {
+      els.popupCookieBadge.textContent = '待同步';
+      els.popupCookieBadge.className = 'badge warn';
+      els.popupCookieDesc.textContent = `表站已登录 (UID ${st.eh.memberId})，可同步至里站`;
+    } else if (st.state === 'sad_panda_locked') {
+      els.popupCookieBadge.textContent = '受限';
+      els.popupCookieBadge.className = 'badge err';
+      els.popupCookieDesc.textContent = st.ex.isMystery
+        ? 'igneous=mystery，请点「配置」填入有效值'
+        : '存在 yay 锁定，点「同步」可自动清理';
+    } else {
+      els.popupCookieBadge.textContent = '未登录';
+      els.popupCookieBadge.className = 'badge inactive';
+      els.popupCookieDesc.textContent = '请登录表站后点同步，或点配置手动填入';
+    }
+  }
+
   function bindEvents() {
     els.openDashboardBtn.addEventListener('click', () => openDashboard(''));
+
+    if (els.popupSyncCookieBtn) {
+      els.popupSyncCookieBtn.addEventListener('click', async () => {
+        els.popupSyncCookieBtn.disabled = true;
+        await sendMessage({ type: 'EH_SYNC_COOKIES_FROM_EH' });
+        await refreshPopupCookieStatus();
+        els.popupSyncCookieBtn.disabled = false;
+      });
+    }
 
     document.querySelectorAll('[data-open-tab]').forEach((btn) => {
       btn.addEventListener('click', () => openDashboard(btn.getAttribute('data-open-tab')));
@@ -312,7 +360,7 @@
     fileDefaults = resp && resp.fileDefaults ? resp.fileDefaults : null;
     renderSettings();
     bindEvents();
-    await refreshActiveTabPreview();
+    await Promise.all([refreshActiveTabPreview(), refreshPopupCookieStatus()]);
   }
 
   document.addEventListener('DOMContentLoaded', init);

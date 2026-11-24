@@ -407,6 +407,55 @@
     return lines.join('\n');
   }
 
+  function buildApiCandidates(origin, rawSettings, exCookieReady) {
+    const officialApiUrl =
+      (rawSettings && rawSettings.officialApiUrl) || DEFAULT_OFFICIAL_API_URL;
+    const preferEx = Boolean(
+      (!rawSettings || rawSettings.preferExhentaiApi !== false) && exCookieReady
+    );
+    const exApi = 'https://exhentai.org/api.php';
+    const rawList = [];
+
+    if (origin === 'https://api.e-hentai.org') {
+      if (preferEx) rawList.push(exApi);
+      rawList.push(officialApiUrl);
+    } else if (origin === 'https://exhentai.org') {
+      rawList.push(exApi, officialApiUrl);
+    } else if (origin === 'https://e-hentai.org') {
+      if (preferEx) {
+        rawList.push(exApi, 'https://e-hentai.org/api.php', officialApiUrl);
+      } else {
+        rawList.push('https://e-hentai.org/api.php', officialApiUrl);
+      }
+    } else {
+      // Custom or mirror origin
+      if (origin) rawList.push(`${origin}/api.php`);
+      if (preferEx) rawList.push(exApi);
+      rawList.push(officialApiUrl);
+    }
+
+    return Array.from(new Set(rawList.filter(Boolean)));
+  }
+
+  function getApiFetchCredentials(apiUrl, origin) {
+    if (!apiUrl) return 'omit';
+    if (origin && apiUrl.startsWith(origin)) return 'include';
+    try {
+      const host = new URL(apiUrl).hostname.toLowerCase();
+      if (
+        host === 'exhentai.org' ||
+        host === 'www.exhentai.org' ||
+        host === 'e-hentai.org' ||
+        host === 'www.e-hentai.org'
+      ) {
+        return 'include';
+      }
+    } catch {
+      // ignore
+    }
+    return 'omit';
+  }
+
   if (typeof globalThis !== 'undefined') {
     globalThis.__EH_DASHBOARD_EXPORTS__ = {
       isLoginOrErrorPage,
@@ -417,7 +466,9 @@
       computeTagStats,
       formatStatsSummaryText,
       chunkArray,
-      normalizeOrigin
+      normalizeOrigin,
+      buildApiCandidates,
+      getApiFetchCredentials
     };
   }
 
@@ -430,6 +481,7 @@
   let settings = {};
   let fileDefaults = null;
   let fileSource = 'settings.json';
+  let latestCookieStatus = null;
   let favoritesData = null;
   let importHistory = {};
   let tagCache = {};
@@ -447,6 +499,7 @@
     siteSelect: document.getElementById('siteSelect'),
     customOriginInput: document.getElementById('customOriginInput'),
     detectSiteBtn: document.getElementById('detectSiteBtn'),
+    topbarCookieBadge: document.getElementById('topbarCookieBadge'),
     transferDisabledBanner: document.getElementById('transferDisabledBanner'),
     enableFavTransferInlineBtn: document.getElementById('enableFavTransferInlineBtn'),
     tagsDisabledBanner: document.getElementById('tagsDisabledBanner'),
@@ -549,6 +602,31 @@
     setMirrorCopyTargetRow: document.getElementById('setMirrorCopyTargetRow'),
     setMirrorCopyTarget: document.getElementById('setMirrorCopyTarget'),
     setOpenBrowserShortcutsBtn: document.getElementById('setOpenBrowserShortcutsBtn'),
+
+    // Cookie manager controls
+    cookieManagerCard: document.getElementById('cookieManagerCard'),
+    syncEhToExCookieBtn: document.getElementById('syncEhToExCookieBtn'),
+    loadBrowserCookiesBtn: document.getElementById('loadBrowserCookiesBtn'),
+    copyCurrentCookiesBtn: document.getElementById('copyCurrentCookiesBtn'),
+    clearSadPandaBtn: document.getElementById('clearSadPandaBtn'),
+    exCookieStatusBadge: document.getElementById('exCookieStatusBadge'),
+    ehCookieStatusBadge: document.getElementById('ehCookieStatusBadge'),
+    igneousStatusBadge: document.getElementById('igneousStatusBadge'),
+    cookiePasteInput: document.getElementById('cookiePasteInput'),
+    parseCookiePasteBtn: document.getElementById('parseCookiePasteBtn'),
+    setExCookieMemberId: document.getElementById('setExCookieMemberId'),
+    setExCookiePassHash: document.getElementById('setExCookiePassHash'),
+    togglePassHashVisBtn: document.getElementById('togglePassHashVisBtn'),
+    setExCookieIgneous: document.getElementById('setExCookieIgneous'),
+    setExCookieSk: document.getElementById('setExCookieSk'),
+    applyManualCookiesBtn: document.getElementById('applyManualCookiesBtn'),
+    clearManualCookiesBtn: document.getElementById('clearManualCookiesBtn'),
+    cookieActionNotice: document.getElementById('cookieActionNotice'),
+    setEnableExCookieManager: document.getElementById('setEnableExCookieManager'),
+    setAutoSyncEhToExCookie: document.getElementById('setAutoSyncEhToExCookie'),
+    setAutoRedirectUnavailableToEx: document.getElementById('setAutoRedirectUnavailableToEx'),
+    setPreferExhentaiApi: document.getElementById('setPreferExhentaiApi'),
+    setSyncCookieToMirror: document.getElementById('setSyncCookieToMirror'),
 
     // File settings & advanced controls
     fileSettingsSourceText: document.getElementById('fileSettingsSourceText'),
@@ -740,13 +818,17 @@
       }
       const contentType = (res.headers.get('content-type') || '').toLowerCase();
       if (!contentType.includes('text/html')) {
-        throw new Error('站点未返回 HTML 页面（如在 exhentai 遇到 Sad Panda，请先登录或切换到镜像站）');
+        throw new Error(
+          '站点返回非网页内容 (Sad Panda)，请在「3. 跳转与全局参数设置 → ExHentai Cookie 管理」同步表站 Cookie 或填写有效的 igneous 通行证'
+        );
       }
 
       const html = await res.text();
       const parsed = parseFavoritesHtml(html, favcat, nextUrl);
       if (parsed.loginRequired) {
-        throw new Error(`站点 ${origin} 未登录或登录已失效，请先在浏览器中登录账号后重试`);
+        throw new Error(
+          `站点 ${origin} 未登录或缺少有效 Cookie，请在浏览器登录或在「设置 → ExHentai Cookie 管理」配置 Cookie 后重试`
+        );
       }
 
       if (!categoryNames) {
@@ -787,6 +869,26 @@
     els.readAllFavsBtn.disabled = true;
     els.stopReadFavsBtn.classList.remove('hidden');
     els.readProgressBox.classList.remove('hidden');
+
+    if (origin === 'https://e-hentai.org') {
+      appendImportLog(
+        '提示：表站 (e-hentai.org) 会隐藏里站限定画廊。若收藏夹含里站限定画廊，建议切换到 https://exhentai.org 读取以免遗漏！',
+        'warn'
+      );
+    }
+
+    const cookieEnsureResp = await sendMessage({ type: 'EH_ENSURE_EX_COOKIES' });
+    if (cookieEnsureResp && cookieEnsureResp.cookieStatus) {
+      latestCookieStatus = cookieEnsureResp.cookieStatus;
+      renderCookieStatusSummary(latestCookieStatus);
+      if (origin === 'https://exhentai.org' && !latestCookieStatus.exReady) {
+        appendImportLog(
+          '警告：当前未检测到 exhentai.org 登录 Cookie，若读取报错请在「设置 → ExHentai Cookie 管理」同步或填写 Cookie（含 igneous）。',
+          'warn'
+        );
+      }
+    }
+
     appendImportLog(`开始从 ${origin} 读取 10 个收藏夹 (favcat 0~9)...`, 'info');
 
     const categories = [];
@@ -1039,7 +1141,9 @@
 
     const contentType = (res.headers.get('content-type') || '').toLowerCase();
     if (!contentType.includes('text/html')) {
-      const err = new Error('站点返回非 HTML（请检查是否已在目标域名/镜像站登录账号）');
+      const err = new Error(
+        '站点返回 Sad Panda 非 HTML 响应，请在「设置 → ExHentai Cookie 管理」同步新账号 Cookie 或补充有效 igneous'
+      );
       err.fatalAuth = true;
       throw err;
     }
@@ -1125,6 +1229,19 @@
     els.impSkippedCount.textContent = '0';
     els.impFailedCount.textContent = '0';
 
+    if (origin === 'https://e-hentai.org') {
+      appendImportLog(
+        '提示：当前目标站点为表站 (e-hentai.org)，里站限定画廊可能无法在表站收藏。建议切换到 https://exhentai.org 导入。',
+        'warn'
+      );
+    }
+
+    const cookieEnsureResp = await sendMessage({ type: 'EH_ENSURE_EX_COOKIES' });
+    if (cookieEnsureResp && cookieEnsureResp.cookieStatus) {
+      latestCookieStatus = cookieEnsureResp.cookieStatus;
+      renderCookieStatusSummary(latestCookieStatus);
+    }
+
     appendImportLog(`开始向 ${origin} 导入 ${total} 个画廊...`, 'info');
 
     for (let i = 0; i < total; i++) {
@@ -1197,39 +1314,75 @@
   }
 
   // --- Feature 2: API Tag Extraction & Deduplicated Stats ---
-  async function requestGdataBatch(origin, batch) {
+  async function callSingleApiEndpoint(apiUrl, origin, batchList) {
     const payload = JSON.stringify({
       method: 'gdata',
-      gidlist: batch.map((g) => [Number(g.gid), String(g.token)]),
+      gidlist: batchList.map((g) => [Number(g.gid), String(g.token)]),
       namespace: 1
     });
 
-    const officialApiUrl = (settings && settings.officialApiUrl) || DEFAULT_OFFICIAL_API_URL;
-    const candidates =
-      origin === 'https://api.e-hentai.org'
-        ? [officialApiUrl]
-        : [`${origin}/api.php`, officialApiUrl];
+    const res = await fetch(apiUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      credentials: getApiFetchCredentials(apiUrl, origin)
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    const contentType = (res.headers.get('content-type') || '').toLowerCase();
+    if (contentType.startsWith('image/')) {
+      throw new Error('接口返回 Sad Panda (缺少有效里站 Cookie 或 igneous)');
+    }
+    const text = await res.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error('接口返回非 JSON 数据');
+    }
+    if (data && data.error) {
+      throw new Error(`API 返回限制提示: ${data.error}`);
+    }
+    if (data && Array.isArray(data.gmetadata)) {
+      return data.gmetadata;
+    }
+    throw new Error('API 返回结构缺少 gmetadata');
+  }
+
+  async function requestGdataBatch(origin, batch, exCookieReady) {
+    const exApi = 'https://exhentai.org/api.php';
+    const candidates = buildApiCandidates(origin, settings, exCookieReady);
 
     let lastError = null;
     for (const apiUrl of candidates) {
       try {
-        const res = await fetch(apiUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: payload,
-          credentials: apiUrl.startsWith(origin) ? 'include' : 'omit'
-        });
-        if (!res.ok) {
-          throw new Error(`HTTP ${res.status}`);
+        const gmetadata = await callSingleApiEndpoint(apiUrl, origin, batch);
+
+        // If queried via non-ExHentai API and some inner-site galleries returned errors, retry them on exhentai.org/api.php with cookies
+        if (apiUrl !== exApi && exCookieReady) {
+          const failedGids = new Set(
+            gmetadata.filter((m) => m && m.error).map((m) => String(m.gid))
+          );
+          if (failedGids.size > 0) {
+            const retryBatch = batch.filter((g) => failedGids.has(String(g.gid)));
+            if (retryBatch.length > 0) {
+              try {
+                const recovered = await callSingleApiEndpoint(exApi, 'https://exhentai.org', retryBatch);
+                const recMap = new Map(
+                  recovered.filter((m) => m && !m.error).map((m) => [String(m.gid), m])
+                );
+                if (recMap.size > 0) {
+                  return gmetadata.map((m) => recMap.get(String(m.gid)) || m);
+                }
+              } catch {
+                // Keep primary gmetadata if fallback retry fails
+              }
+            }
+          }
         }
-        const data = await res.json();
-        if (data && data.error) {
-          throw new Error(`API 返回限制提示: ${data.error}`);
-        }
-        if (data && Array.isArray(data.gmetadata)) {
-          return data.gmetadata;
-        }
-        throw new Error('API 返回结构缺少 gmetadata');
+
+        return gmetadata;
       } catch (err) {
         lastError = err;
       }
@@ -1281,6 +1434,13 @@
     }
 
     const origin = getActiveOrigin();
+    const cookieResp = await sendMessage({ type: 'EH_ENSURE_EX_COOKIES' });
+    if (cookieResp && cookieResp.cookieStatus) {
+      latestCookieStatus = cookieResp.cookieStatus;
+      renderCookieStatusSummary(latestCookieStatus);
+    }
+    const exCookieReady = Boolean(latestCookieStatus && latestCookieStatus.exReady);
+
     const minDelay = Number(settings.tagDelayMinMs) || 200;
     const defaultDelay = Number(settings.tagDelayMs) || 600;
     const delayMs = Math.max(minDelay, Number(els.tagDelayInput.value) || defaultDelay);
@@ -1310,7 +1470,7 @@
         const batch = batches[b];
         els.tagStatusText.textContent = `正在获取标签第 ${b + 1}/${batches.length} 批 (${processed}/${pending.length})...`;
 
-        const gmetadataList = await requestGdataBatch(origin, batch);
+        const gmetadataList = await requestGdataBatch(origin, batch, exCookieReady);
         for (const meta of gmetadataList) {
           const gid = String(meta.gid);
           if (meta.error) {
@@ -1620,6 +1780,89 @@
   }
 
   // --- Settings Sync & Tester ---
+  function showCookieNotice(text) {
+    if (!els.cookieActionNotice) return;
+    els.cookieActionNotice.textContent = text;
+  }
+
+  function renderCookieStatusSummary(status) {
+    if (!status) return;
+    const setStrong = (el, text, cls) => {
+      if (!el) return;
+      el.textContent = text;
+      el.className = cls || '';
+    };
+
+    if (!status.supported) {
+      if (els.topbarCookieBadge) {
+        els.topbarCookieBadge.textContent = '里站 Cookie: 需刷新插件权限';
+        els.topbarCookieBadge.className = 'cookie-pill status-warn';
+      }
+      setStrong(els.exCookieStatusBadge, '请在扩展页刷新重载插件', 'text-amber');
+      setStrong(els.ehCookieStatusBadge, '-', '');
+      setStrong(els.igneousStatusBadge, '-', '');
+      return;
+    }
+
+    const ex = status.ex || {};
+    const eh = status.eh || {};
+
+    if (ex.hasLogin) {
+      setStrong(els.exCookieStatusBadge, `已登录 (UID: ${ex.memberId})`, 'text-green');
+    } else {
+      setStrong(els.exCookieStatusBadge, '未检测到登录 Cookie', 'text-red');
+    }
+
+    if (eh.hasLogin) {
+      setStrong(els.ehCookieStatusBadge, `已登录 (UID: ${eh.memberId})`, 'text-green');
+    } else {
+      setStrong(els.ehCookieStatusBadge, '未登录', 'muted');
+    }
+
+    if (ex.hasSadPandaLock || ex.isMystery) {
+      setStrong(
+        els.igneousStatusBadge,
+        ex.isMystery ? '受限 (mystery — 需填写有效 igneous)' : '存在 yay 白屏锁定',
+        'text-red'
+      );
+    } else if (ex.hasValidIgneous) {
+      const shortIg =
+        ex.igneous.length > 8 ? `${ex.igneous.slice(0, 4)}...${ex.igneous.slice(-4)}` : ex.igneous;
+      setStrong(els.igneousStatusBadge, `有效 (${shortIg})`, 'text-green');
+    } else if (ex.hasLogin) {
+      setStrong(els.igneousStatusBadge, '待访问里站自动签发 (或手动填入)', 'text-amber');
+    } else {
+      setStrong(els.igneousStatusBadge, '未配置', 'muted');
+    }
+
+    if (els.topbarCookieBadge) {
+      if (status.state === 'ready_full') {
+        els.topbarCookieBadge.textContent = `里站 Cookie: 已就绪 (UID ${ex.memberId})`;
+        els.topbarCookieBadge.className = 'cookie-pill status-ok';
+      } else if (status.state === 'ready_basic') {
+        els.topbarCookieBadge.textContent = `里站 Cookie: 已登录 (UID ${ex.memberId})`;
+        els.topbarCookieBadge.className = 'cookie-pill status-ok';
+      } else if (status.state === 'can_sync_from_eh') {
+        els.topbarCookieBadge.textContent = '里站 Cookie: 可从表站同步';
+        els.topbarCookieBadge.className = 'cookie-pill status-warn';
+      } else if (status.state === 'sad_panda_locked') {
+        els.topbarCookieBadge.textContent = '里站 Cookie: Sad Panda 受限';
+        els.topbarCookieBadge.className = 'cookie-pill status-err';
+      } else {
+        els.topbarCookieBadge.textContent = '里站 Cookie: 未登录';
+        els.topbarCookieBadge.className = 'cookie-pill status-warn';
+      }
+    }
+  }
+
+  async function refreshCookieStatusUI() {
+    const resp = await sendMessage({ type: 'EH_GET_COOKIE_STATUS' });
+    if (resp && resp.ok && resp.cookieStatus) {
+      latestCookieStatus = resp.cookieStatus;
+      renderCookieStatusSummary(latestCookieStatus);
+    }
+  }
+
   function renderSettingsControls() {
     els.setEnableFavTransfer.checked = Boolean(settings.enableFavTransfer);
     els.setEnableTagStats.checked = Boolean(settings.enableTagStats);
@@ -1705,6 +1948,43 @@
     }
     if (els.setToastDurationMs && document.activeElement !== els.setToastDurationMs) {
       els.setToastDurationMs.value = String(settings.toastDurationMs || 3200);
+    }
+
+    if (els.setEnableExCookieManager) {
+      els.setEnableExCookieManager.checked =
+        settings.enableExCookieManager !== undefined
+          ? Boolean(settings.enableExCookieManager)
+          : true;
+    }
+    if (els.setAutoSyncEhToExCookie) {
+      els.setAutoSyncEhToExCookie.checked =
+        settings.autoSyncEhToExCookie !== undefined ? Boolean(settings.autoSyncEhToExCookie) : true;
+    }
+    if (els.setAutoRedirectUnavailableToEx) {
+      els.setAutoRedirectUnavailableToEx.checked =
+        settings.autoRedirectUnavailableToEx !== undefined
+          ? Boolean(settings.autoRedirectUnavailableToEx)
+          : true;
+    }
+    if (els.setPreferExhentaiApi) {
+      els.setPreferExhentaiApi.checked =
+        settings.preferExhentaiApi !== undefined ? Boolean(settings.preferExhentaiApi) : true;
+    }
+    if (els.setSyncCookieToMirror) {
+      els.setSyncCookieToMirror.checked = Boolean(settings.syncCookieToMirror);
+    }
+
+    if (els.setExCookieMemberId && document.activeElement !== els.setExCookieMemberId) {
+      els.setExCookieMemberId.value = settings.exCookieMemberId || '';
+    }
+    if (els.setExCookiePassHash && document.activeElement !== els.setExCookiePassHash) {
+      els.setExCookiePassHash.value = settings.exCookiePassHash || '';
+    }
+    if (els.setExCookieIgneous && document.activeElement !== els.setExCookieIgneous) {
+      els.setExCookieIgneous.value = settings.exCookieIgneous || '';
+    }
+    if (els.setExCookieSk && document.activeElement !== els.setExCookieSk) {
+      els.setExCookieSk.value = settings.exCookieSk || '';
     }
 
     els.transferDisabledBanner.classList.toggle('hidden', Boolean(settings.enableFavTransfer));
@@ -2050,13 +2330,194 @@
       ['setEnableMirrorRedirect', 'enableMirrorRedirect'],
       ['setEnableShortcutCopy', 'enableShortcutCopy'],
       ['setEnableDomainSwapRedirect', 'enableDomainSwapRedirect'],
-      ['setRedirectExternalOnly', 'redirectExternalOnly']
+      ['setRedirectExternalOnly', 'redirectExternalOnly'],
+      ['setEnableExCookieManager', 'enableExCookieManager'],
+      ['setAutoSyncEhToExCookie', 'autoSyncEhToExCookie'],
+      ['setAutoRedirectUnavailableToEx', 'autoRedirectUnavailableToEx'],
+      ['setPreferExhentaiApi', 'preferExhentaiApi'],
+      ['setSyncCookieToMirror', 'syncCookieToMirror']
     ];
     togglePairs.forEach(([elId, key]) => {
-      els[elId].addEventListener('change', () => {
-        savePartialSettings({ [key]: els[elId].checked });
+      if (!els[elId]) return;
+      els[elId].addEventListener('change', async () => {
+        await savePartialSettings({ [key]: els[elId].checked });
+        await refreshCookieStatusUI();
       });
     });
+
+    if (els.topbarCookieBadge) {
+      els.topbarCookieBadge.addEventListener('click', () => {
+        switchMainTab('settings');
+        window.location.hash = 'cookies';
+        if (els.cookieManagerCard && els.cookieManagerCard.scrollIntoView) {
+          els.cookieManagerCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+      });
+    }
+
+    if (els.syncEhToExCookieBtn) {
+      els.syncEhToExCookieBtn.addEventListener('click', async () => {
+        const resp = await sendMessage({ type: 'EH_SYNC_COOKIES_FROM_EH' });
+        if (resp && resp.cookieStatus) {
+          latestCookieStatus = resp.cookieStatus;
+          renderCookieStatusSummary(latestCookieStatus);
+          if (latestCookieStatus.exReady) {
+            showCookieNotice(
+              `已成功将登录 Cookie 同步至 exhentai.org (UID: ${latestCookieStatus.ex.memberId})！`
+            );
+          } else {
+            showCookieNotice(
+              '表站尚未登录，请先在 e-hentai.org 登录账号或在下方手动粘贴 Cookie。'
+            );
+          }
+        }
+      });
+    }
+
+    if (els.loadBrowserCookiesBtn) {
+      els.loadBrowserCookiesBtn.addEventListener('click', async () => {
+        const resp = await sendMessage({ type: 'EH_GET_COOKIE_STATUS' });
+        const st = resp && resp.cookieStatus;
+        if (!st || !st.supported) {
+          showCookieNotice('无法读取浏览器 Cookie，请先在扩展管理页刷新插件。');
+          return;
+        }
+        latestCookieStatus = st;
+        renderCookieStatusSummary(st);
+        const src = st.ex && st.ex.hasLogin ? st.ex : st.eh || {};
+        if (!src.memberId && !src.passHash) {
+          showCookieNotice('当前浏览器中尚未检测到 E-Hentai / ExHentai 登录 Cookie。');
+          return;
+        }
+        els.setExCookieMemberId.value = src.memberId || '';
+        els.setExCookiePassHash.value = src.passHash || '';
+        els.setExCookieIgneous.value = src.hasValidIgneous ? src.igneous : '';
+        els.setExCookieSk.value = src.sk || '';
+        showCookieNotice('已将浏览器当前 Cookie 读取至表单，点击「保存并写入浏览器 Cookie」可持久保存。');
+      });
+    }
+
+    if (els.copyCurrentCookiesBtn) {
+      els.copyCurrentCookiesBtn.addEventListener('click', async () => {
+        const resp = await sendMessage({ type: 'EH_GET_COOKIE_STATUS' });
+        const st = resp && resp.cookieStatus;
+        if (st) {
+          latestCookieStatus = st;
+          renderCookieStatusSummary(st);
+        }
+        const headerStr = st && st.cookieHeaderString;
+        if (!headerStr) {
+          showCookieNotice('当前无可复制的有效登录 Cookie。');
+          return;
+        }
+        await navigator.clipboard.writeText(headerStr);
+        showCookieNotice('已复制 Cookie 字符串到剪贴板！');
+      });
+    }
+
+    if (els.clearSadPandaBtn) {
+      els.clearSadPandaBtn.addEventListener('click', async () => {
+        const resp = await sendMessage({ type: 'EH_CLEAR_SAD_PANDA' });
+        if (resp && resp.cookieStatus) {
+          latestCookieStatus = resp.cookieStatus;
+          renderCookieStatusSummary(latestCookieStatus);
+          showCookieNotice(
+            `已清理 ${resp.removedCount || 0} 个异常 Cookie (yay / mystery) 并重新尝试同步！`
+          );
+        }
+      });
+    }
+
+    const applyParsedPaste = async (rawText) => {
+      if (!rawText || !rawText.trim()) {
+        showCookieNotice('请先在输入框粘贴 Cookie 字符串或 JSON。');
+        return;
+      }
+      const resp = await sendMessage({ type: 'EH_PARSE_COOKIE_INPUT', raw: rawText });
+      const p = resp && resp.parsed;
+      if (!p || (!p.ipb_member_id && !p.ipb_pass_hash && !p.igneous && !p.sk)) {
+        showCookieNotice('未识别出 ipb_member_id / ipb_pass_hash / igneous 字段，请检查格式。');
+        return;
+      }
+      if (p.ipb_member_id) els.setExCookieMemberId.value = p.ipb_member_id;
+      if (p.ipb_pass_hash) els.setExCookiePassHash.value = p.ipb_pass_hash;
+      if (p.igneous) els.setExCookieIgneous.value = p.igneous;
+      if (p.sk) els.setExCookieSk.value = p.sk;
+      showCookieNotice('已解析填入下方字段，请点击「保存并写入浏览器 Cookie」生效！');
+    };
+
+    if (els.parseCookiePasteBtn) {
+      els.parseCookiePasteBtn.addEventListener('click', () => {
+        applyParsedPaste(els.cookiePasteInput.value);
+      });
+    }
+
+    if (els.cookiePasteInput) {
+      els.cookiePasteInput.addEventListener('paste', (e) => {
+        const text = e.clipboardData && e.clipboardData.getData('text');
+        if (text) {
+          setTimeout(() => applyParsedPaste(els.cookiePasteInput.value || text), 30);
+        }
+      });
+    }
+
+    if (els.togglePassHashVisBtn && els.setExCookiePassHash) {
+      els.togglePassHashVisBtn.addEventListener('click', () => {
+        const isPwd = els.setExCookiePassHash.type === 'password';
+        els.setExCookiePassHash.type = isPwd ? 'text' : 'password';
+        els.togglePassHashVisBtn.textContent = isPwd ? '隐藏' : '显示';
+      });
+    }
+
+    if (els.applyManualCookiesBtn) {
+      els.applyManualCookiesBtn.addEventListener('click', async () => {
+        const memberId = (els.setExCookieMemberId.value || '').trim();
+        const passHash = (els.setExCookiePassHash.value || '').trim();
+        const igneous = (els.setExCookieIgneous.value || '').trim();
+        const sk = (els.setExCookieSk.value || '').trim();
+
+        if (!memberId || !passHash) {
+          showCookieNotice('请至少填写 ipb_member_id 和 ipb_pass_hash！');
+          return;
+        }
+
+        const resp = await sendMessage({
+          type: 'EH_APPLY_MANUAL_COOKIES',
+          exCookieMemberId: memberId,
+          exCookiePassHash: passHash,
+          exCookieIgneous: igneous,
+          exCookieSk: sk,
+          alsoApplyToEh: true
+        });
+
+        if (resp && resp.ok) {
+          if (resp.settings) settings = resp.settings;
+          if (resp.cookieStatus) {
+            latestCookieStatus = resp.cookieStatus;
+            renderCookieStatusSummary(latestCookieStatus);
+          }
+          renderSettingsControls();
+          els.cookiePasteInput.value = '';
+          showCookieNotice('已保存并将 Cookie 写入 exhentai.org 与 e-hentai.org！');
+        }
+      });
+    }
+
+    if (els.clearManualCookiesBtn) {
+      els.clearManualCookiesBtn.addEventListener('click', async () => {
+        const resp = await sendMessage({ type: 'EH_CLEAR_MANUAL_COOKIES' });
+        if (resp && resp.ok) {
+          if (resp.settings) settings = resp.settings;
+          if (resp.cookieStatus) {
+            latestCookieStatus = resp.cookieStatus;
+            renderCookieStatusSummary(latestCookieStatus);
+          }
+          els.cookiePasteInput.value = '';
+          renderSettingsControls();
+          showCookieNotice('已清空手动保存的 Cookie 配置（浏览器当前已登录状态仍保留）。');
+        }
+      });
+    }
 
     const selectPairs = [
       ['setMirrorSourceScope', 'mirrorSourceScope'],
@@ -2249,11 +2710,24 @@
     renderSettingsControls();
     refreshTagStatsView();
 
-    const hash = (window.location.hash || '').replace('#', '');
-    if (['transfer', 'tags', 'settings'].includes(hash)) {
-      switchMainTab(hash);
-    }
+    const applyLocationHash = () => {
+      const hash = (window.location.hash || '').replace('#', '');
+      if (hash === 'cookies') {
+        switchMainTab('settings');
+        if (els.cookieManagerCard && els.cookieManagerCard.scrollIntoView) {
+          setTimeout(() => {
+            els.cookieManagerCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 50);
+        }
+      } else if (['transfer', 'tags', 'settings'].includes(hash)) {
+        switchMainTab(hash);
+      }
+    };
 
+    applyLocationHash();
+    window.addEventListener('hashchange', applyLocationHash);
+
+    await refreshCookieStatusUI();
     await detectOpenSite();
   }
 

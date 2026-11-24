@@ -29,6 +29,7 @@
         </label>
         <input type="text" id="customOriginInput" class="hidden" placeholder="https://example.org">
         <button id="detectSiteBtn" class="btn btn-ghost">自动检测标签页</button>
+        <button id="topbarCookieBadge" class="cookie-pill" title="点击管理 ExHentai 里站 Cookie">里站 Cookie: 检测中...</button>
       </div>
     </header>
 
@@ -395,6 +396,127 @@
             <button id="setOpenBrowserShortcutsBtn" class="btn btn-ghost">
               配置浏览器地址栏全局快捷键 (chrome://extensions/shortcuts)
             </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" id="cookieManagerCard" style="margin-top: 16px;">
+        <div class="card-header">
+          <div>
+            <h2>ExHentai 里站 Cookie 管理与里站限定画廊支持</h2>
+            <p class="muted">自动同步表站登录态或手动配置 ipb_member_id / ipb_pass_hash / igneous，解决里站限定画廊不可见与 Sad Panda 白屏问题。</p>
+          </div>
+          <div class="btn-group">
+            <button id="syncEhToExCookieBtn" class="btn btn-primary btn-sm">一键从表站同步到里站</button>
+            <button id="loadBrowserCookiesBtn" class="btn btn-ghost btn-sm">读取浏览器当前 Cookie</button>
+            <button id="copyCurrentCookiesBtn" class="btn btn-ghost btn-sm">复制 Cookie 字符串</button>
+            <button id="clearSadPandaBtn" class="btn btn-ghost btn-sm">清除 Sad Panda 锁定</button>
+          </div>
+        </div>
+
+        <div class="cookie-status-strip">
+          <div class="mini-stat">
+            <span>里站 (exhentai.org)</span>
+            <strong id="exCookieStatusBadge" class="text-blue">检测中...</strong>
+          </div>
+          <div class="mini-stat">
+            <span>表站 (e-hentai.org)</span>
+            <strong id="ehCookieStatusBadge" class="text-blue">检测中...</strong>
+          </div>
+          <div class="mini-stat">
+            <span>里站通行证 (igneous)</span>
+            <strong id="igneousStatusBadge" class="text-blue">检测中...</strong>
+          </div>
+        </div>
+
+        <div class="settings-grid">
+          <div class="form-stack">
+            <label class="field">
+              <span>快速解析粘贴（支持整段 Cookie 字符串、DevTools 复制行或 JSON）</span>
+              <div class="shortcut-row">
+                <input type="text" id="cookiePasteInput" class="cookie-raw-input" placeholder="粘贴 ipb_member_id=...; ipb_pass_hash=...; igneous=... 自动识别">
+                <button type="button" id="parseCookiePasteBtn" class="btn btn-ghost btn-sm">解析填入</button>
+              </div>
+            </label>
+            <div class="cookie-two-col">
+              <label class="field">
+                <span>ipb_member_id (用户 ID)</span>
+                <input type="text" id="setExCookieMemberId" placeholder="例如 1234567">
+              </label>
+              <label class="field">
+                <span>sk (可选，站点偏好设置)</span>
+                <input type="text" id="setExCookieSk" placeholder="可选">
+              </label>
+            </div>
+            <label class="field">
+              <span>ipb_pass_hash (登录密码哈希)</span>
+              <div class="shortcut-row">
+                <input type="password" id="setExCookiePassHash" class="cookie-raw-input" placeholder="32 位十六进制字符串">
+                <button type="button" id="togglePassHashVisBtn" class="btn btn-ghost btn-sm">显示</button>
+              </div>
+            </label>
+            <label class="field">
+              <span>igneous (里站核心通行证 — 使用日本/共享节点遇 Sad Panda 时必填有效值)</span>
+              <input type="text" id="setExCookieIgneous" placeholder="例如 3a4b5c6d7e8f... (勿填 mystery)">
+            </label>
+            <div class="btn-group" style="margin-top: 4px;">
+              <button type="button" id="applyManualCookiesBtn" class="btn btn-accent btn-sm">保存并写入浏览器 Cookie</button>
+              <button type="button" id="clearManualCookiesBtn" class="btn btn-ghost btn-sm">清空手动保存项</button>
+              <span id="cookieActionNotice" class="muted"></span>
+            </div>
+          </div>
+
+          <div class="settings-list" style="margin-top: 10px;">
+            <div class="setting-item">
+              <div>
+                <strong>启用 ExHentai Cookie 自动维护</strong>
+                <p class="muted">访问里站或执行任务前自动清理 yay 白屏缓存并保持 Cookie 有效</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setEnableExCookieManager">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>自动将表站登录态同步至里站</strong>
+                <p class="muted">在 e-hentai.org 登录或切换账号后，自动同步至 exhentai.org（未锁手动项时生效）</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setAutoSyncEhToExCookie">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>表站遇到“画廊不可见”自动跳里站查看</strong>
+                <p class="muted">打开里站限定画廊的表站链接提示不可用时，自动同步 Cookie 并跳往里站/镜像站</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setAutoRedirectUnavailableToEx">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>标签统计优先调用带 Cookie 的里站 API</strong>
+                <p class="muted">里站 Cookie 就绪时使用 exhentai.org/api.php 查询，确保里站限定画廊正常统计</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setPreferExhentaiApi">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>同时将 Cookie 同步至自定义镜像站域名</strong>
+                <p class="muted">仅当自建反代镜像站需要透传个人登录 Cookie 时开启（公共镜像站建议关闭）</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setSyncCookieToMirror">
+                <span class="slider"></span>
+              </label>
+            </div>
           </div>
         </div>
       </div>

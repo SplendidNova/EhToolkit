@@ -56,6 +56,17 @@
     ],
     "highlightTagLabel": "female:stocking(s)"
   },
+  "cookies": {
+    "enableExCookieManager": true,
+    "autoSyncEhToExCookie": true,
+    "syncCookieToMirror": false,
+    "preferExhentaiApi": true,
+    "autoRedirectUnavailableToEx": true,
+    "exCookieMemberId": "",
+    "exCookiePassHash": "",
+    "exCookieIgneous": "",
+    "exCookieSk": ""
+  },
   "tester": {
     "sampleGalleryPath": "/g/1000000/0123456789/"
   }

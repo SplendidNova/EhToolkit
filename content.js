@@ -6,6 +6,9 @@
   const DEFAULT_CONTENT_SETTINGS = {
     settingsVersion: 3,
     enableShortcutCopy: true,
+    enableMirrorRedirect: false,
+    enableExCookieManager: true,
+    autoRedirectUnavailableToEx: true,
     copyTargetDomain: 'exhentai.org',
     mirrorDomain: '',
     mirrorCopyTarget: 'exhentai.org',
@@ -24,6 +27,8 @@
   };
 
   let currentSettings = { ...DEFAULT_CONTENT_SETTINGS };
+  let settingsLoaded = false;
+  let pageCheckExecuted = false;
 
   function normalizeDomain(input) {
     if (!input || typeof input !== 'string') return '';
@@ -244,11 +249,258 @@
     return null;
   }
 
+  function sendBgMessage(payload) {
+    return new Promise((resolve) => {
+      if (typeof chrome === 'undefined' || !chrome.runtime || !chrome.runtime.sendMessage) {
+        resolve(null);
+        return;
+      }
+      chrome.runtime.sendMessage(payload, (resp) => {
+        if (chrome.runtime.lastError) {
+          resolve(null);
+          return;
+        }
+        resolve(resp);
+      });
+    });
+  }
+
+  function isUnavailableEhGalleryPage(doc) {
+    if (!doc || !doc.body) return false;
+    if (doc.querySelector('#gdt, .gm, #i1')) return false;
+    const noticeBox = doc.querySelector('.d');
+    const text = noticeBox ? noticeBox.textContent || '' : doc.body.textContent || '';
+    return (
+      text.includes('This gallery has been removed or is unavailable') ||
+      text.includes('This page is not available')
+    );
+  }
+
+  function isSadPandaDocument(doc) {
+    if (!doc) return false;
+    const ct = String(doc.contentType || '').toLowerCase();
+    if (ct.startsWith('image/')) return true;
+    if (!doc.body) return false;
+    if (doc.querySelector('.ido, .gm, .itg, #nb, #i1')) return false;
+    const children = doc.body.children;
+    if (
+      children &&
+      children.length === 1 &&
+      children[0].tagName === 'IMG' &&
+      !(doc.body.textContent || '').trim()
+    ) {
+      return true;
+    }
+    return false;
+  }
+
+  function buildInnerSiteTargetUrl(rawUrl, settings) {
+    try {
+      const u = new URL(rawUrl);
+      const mirror = normalizeDomain(settings && settings.mirrorDomain);
+      const targetHost =
+        settings && settings.enableMirrorRedirect && mirror ? mirror : 'exhentai.org';
+      u.protocol = 'https:';
+      u.hostname = targetHost;
+      u.port = '';
+      return { url: u.toString(), targetHost };
+    } catch {
+      return null;
+    }
+  }
+
+  async function handleUnavailableEhGallery() {
+    const path = window.location.pathname || '';
+    const isGalleryOrPage =
+      /^\/g\/\d+\/[0-9a-f]{10}/i.test(path) || /^\/s\/[0-9a-f]{10}\/\d+-\d+/i.test(path);
+    if (!isGalleryOrPage) return;
+    if (!isUnavailableEhGalleryPage(document)) return;
+
+    const target = buildInnerSiteTargetUrl(window.location.href, currentSettings);
+    if (!target) return;
+
+    const dedupKey = `eh_toolkit_unavail_jump_${path}`;
+    let alreadyJumped = false;
+    try {
+      alreadyJumped = sessionStorage.getItem(dedupKey) === '1';
+    } catch {
+      alreadyJumped = false;
+    }
+
+    const noticeEl = document.querySelector('.d') || document.body;
+    if (noticeEl && !document.getElementById('eh-toolkit-jump-ex-btn')) {
+      const wrap = document.createElement('div');
+      wrap.style.marginTop = '12px';
+      const btn = document.createElement('button');
+      btn.id = 'eh-toolkit-jump-ex-btn';
+      btn.textContent = `在里站 (${target.targetHost}) 打开此画廊`;
+      Object.assign(btn.style, {
+        padding: '8px 14px',
+        borderRadius: '7px',
+        border: '1px solid #3b82f6',
+        background: '#2563eb',
+        color: '#ffffff',
+        fontSize: '13px',
+        fontWeight: '600',
+        cursor: 'pointer'
+      });
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        btn.textContent = '正在同步里站 Cookie 并跳转...';
+        await sendBgMessage({ type: 'EH_ENSURE_EX_COOKIES' });
+        window.location.href = target.url;
+      });
+      wrap.appendChild(btn);
+      noticeEl.appendChild(wrap);
+    }
+
+    if (currentSettings.autoRedirectUnavailableToEx && !alreadyJumped) {
+      try {
+        sessionStorage.setItem(dedupKey, '1');
+      } catch {
+        // Ignore storage errors
+      }
+      showToast(
+        `该画廊在表站不可见，正在同步 Cookie 并跳转至 ${target.targetHost}...`,
+        target.url,
+        false
+      );
+      await sendBgMessage({ type: 'EH_ENSURE_EX_COOKIES' });
+      window.location.replace(target.url);
+    }
+  }
+
+  function renderSadPandaHelper() {
+    if (document.getElementById('eh-sad-panda-helper')) return;
+
+    const card = document.createElement('div');
+    card.id = 'eh-sad-panda-helper';
+    Object.assign(card.style, {
+      position: 'fixed',
+      top: '18px',
+      right: '18px',
+      zIndex: '2147483647',
+      maxWidth: '380px',
+      padding: '14px 16px',
+      borderRadius: '12px',
+      background: 'rgba(15, 23, 42, 0.96)',
+      color: '#f8fafc',
+      border: '1px solid rgba(245, 158, 11, 0.8)',
+      boxShadow: '0 14px 32px rgba(0,0,0,0.55)',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+      fontSize: '13px',
+      lineHeight: '1.5'
+    });
+
+    const title = document.createElement('div');
+    title.textContent = '检测到 ExHentai Sad Panda（里站访问受限）';
+    Object.assign(title.style, {
+      fontWeight: '700',
+      color: '#fbbf24',
+      marginBottom: '6px',
+      fontSize: '14px'
+    });
+
+    const desc = document.createElement('div');
+    desc.textContent =
+      '可能原因：尚未同步表站登录 Cookie，或当前代理节点需要配置有效的 igneous 通行证。';
+    Object.assign(desc.style, {
+      color: '#cbd5e1',
+      fontSize: '12px',
+      marginBottom: '10px'
+    });
+
+    const statusLine = document.createElement('div');
+    Object.assign(statusLine.style, {
+      color: '#93c5fd',
+      fontSize: '12px',
+      marginBottom: '8px',
+      display: 'none'
+    });
+
+    const btnRow = document.createElement('div');
+    Object.assign(btnRow.style, {
+      display: 'flex',
+      gap: '8px',
+      flexWrap: 'wrap'
+    });
+
+    const syncBtn = document.createElement('button');
+    syncBtn.textContent = '一键同步表站 Cookie 并刷新';
+    Object.assign(syncBtn.style, {
+      padding: '6px 11px',
+      borderRadius: '7px',
+      border: 'none',
+      background: '#3b82f6',
+      color: '#fff',
+      fontSize: '12px',
+      fontWeight: '600',
+      cursor: 'pointer'
+    });
+    syncBtn.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      syncBtn.textContent = '正在同步...';
+      const resp = await sendBgMessage({ type: 'EH_SYNC_COOKIES_FROM_EH' });
+      const st = resp && resp.cookieStatus;
+      statusLine.style.display = 'block';
+      if (st && st.exReady) {
+        statusLine.style.color = '#34d399';
+        statusLine.textContent = '已写入 Cookie 并清理 Sad Panda 缓存，正在刷新页面...';
+        setTimeout(() => window.location.reload(), 400);
+      } else {
+        syncBtn.disabled = false;
+        syncBtn.textContent = '重试同步';
+        statusLine.style.color = '#fca5a5';
+        statusLine.textContent =
+          '未在表站检测到登录状态，请先登录 e-hentai.org 或点击右侧按钮手动填写 Cookie（含 igneous）。';
+      }
+    });
+
+    const cfgBtn = document.createElement('button');
+    cfgBtn.textContent = '打开控制台配置 Cookie';
+    Object.assign(cfgBtn.style, {
+      padding: '6px 11px',
+      borderRadius: '7px',
+      border: '1px solid #475569',
+      background: 'rgba(148, 163, 184, 0.16)',
+      color: '#e2e8f0',
+      fontSize: '12px',
+      fontWeight: '600',
+      cursor: 'pointer'
+    });
+    cfgBtn.addEventListener('click', () => {
+      sendBgMessage({ type: 'EH_OPEN_DASHBOARD', hash: 'cookies' });
+    });
+
+    btnRow.appendChild(syncBtn);
+    btnRow.appendChild(cfgBtn);
+    card.appendChild(title);
+    card.appendChild(desc);
+    card.appendChild(statusLine);
+    card.appendChild(btnRow);
+    (document.body || document.documentElement).appendChild(card);
+  }
+
+  function maybeRunPageEnhancements() {
+    if (pageCheckExecuted || !settingsLoaded) return;
+    if (document.readyState === 'loading') return;
+    pageCheckExecuted = true;
+
+    const kind = classifyHost(window.location.hostname, currentSettings);
+    if (kind === 'e-hentai') {
+      handleUnavailableEhGallery();
+    } else if (kind === 'exhentai' && isSadPandaDocument(document)) {
+      renderSadPandaHelper();
+    }
+  }
+
   function loadSettings() {
     if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.sendMessage) {
       chrome.runtime.sendMessage({ type: 'EH_GET_SETTINGS' }, (resp) => {
         if (!chrome.runtime.lastError && resp && resp.ok && resp.settings) {
           currentSettings = { ...DEFAULT_CONTENT_SETTINGS, ...resp.settings };
+          settingsLoaded = true;
+          maybeRunPageEnhancements();
           return;
         }
         if (chrome.storage && chrome.storage.local) {
@@ -256,7 +508,12 @@
             if (res && res[SETTINGS_KEY]) {
               currentSettings = { ...DEFAULT_CONTENT_SETTINGS, ...res[SETTINGS_KEY] };
             }
+            settingsLoaded = true;
+            maybeRunPageEnhancements();
           });
+        } else {
+          settingsLoaded = true;
+          maybeRunPageEnhancements();
         }
       });
       return;
@@ -266,12 +523,22 @@
         if (res && res[SETTINGS_KEY]) {
           currentSettings = { ...DEFAULT_CONTENT_SETTINGS, ...res[SETTINGS_KEY] };
         }
+        settingsLoaded = true;
+        maybeRunPageEnhancements();
       });
+      return;
     }
+    settingsLoaded = true;
+    maybeRunPageEnhancements();
   }
 
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {
     loadSettings();
+    if (document.readyState === 'loading') {
+      window.addEventListener('DOMContentLoaded', maybeRunPageEnhancements, { once: true });
+    } else {
+      maybeRunPageEnhancements();
+    }
 
     if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.onChanged) {
       chrome.storage.onChanged.addListener((changes, areaName) => {
@@ -340,7 +607,10 @@
       classifyHost,
       convertUrlForCopy,
       isPlainCopyShortcut,
-      matchesShortcut
+      matchesShortcut,
+      isUnavailableEhGalleryPage,
+      isSadPandaDocument,
+      buildInnerSiteTargetUrl
     };
   }
 })();

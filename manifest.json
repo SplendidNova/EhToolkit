@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "EH Toolkit - 收藏迁移 / 标签统计 / 域名转换",
-  "version": "1.2.0",
-  "description": "E-Hentai 与 ExHentai 辅助工具：10个收藏夹跨账号迁移、artist/group/parody 及自定义重点标签统计、外链自动转镜像站或表里站互转、快捷键复制转换画廊链接域名。",
+  "version": "1.3.0",
+  "description": "E-Hentai 与 ExHentai 辅助工具：ExHentai 里站 Cookie 同步与配置、10个收藏夹跨账号迁移、标签去重统计、外链转镜像站与表里站转换。",
   "permissions": [
+    "cookies",
     "storage",
     "tabs",
     "webNavigation",
