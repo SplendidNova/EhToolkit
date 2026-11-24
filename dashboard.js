@@ -73,7 +73,9 @@
     let parsedCountTotal = 0;
     const fpNodes = Array.from(doc.querySelectorAll('.nosel .fp'));
     for (const node of fpNodes) {
-      const onclick = node.getAttribute ? node.getAttribute('onclick') || '' : '';
+      const onclick = node.getAttribute
+        ? node.getAttribute('data-eh-onclick') || node.getAttribute('onclick') || ''
+        : '';
       let match = onclick.match(/favcat=(\d+)/i);
       if (!match && node.querySelector) {
         const anchor = node.querySelector('a[href*="favcat="]');
@@ -384,10 +386,304 @@
     };
   }
 
+  function decodeNumericEntitiesForScheme(str) {
+    return str
+      .replace(/&#(\d+);?/g, (_, dec) => {
+        const code = Number(dec);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+      })
+      .replace(/&#x([0-9a-f]+);?/gi, (_, hex) => {
+        const code = parseInt(hex, 16);
+        return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : '';
+      });
+  }
+
+  function sanitizeHtmlForDomParser(rawHtml) {
+    if (!rawHtml || typeof rawHtml !== 'string') return '';
+
+    const STRIP_BLOCK_TAGS = new Set([
+      'script',
+      'style',
+      'iframe',
+      'object',
+      'embed',
+      'svg',
+      'math'
+    ]);
+    const RAW_STOP_TAGS = new Set(['script', 'style']);
+    const RCDATA_TAGS = new Set(['title', 'textarea']);
+    const VOID_TAGS = new Set(['embed']);
+    const URL_ATTRS = new Set(['href', 'action', 'formaction', 'src', 'xlink:href']);
+
+    const isSpace = (ch) =>
+      ch === ' ' || ch === '\t' || ch === '\n' || ch === '\r' || ch === '\f';
+    const isAsciiAlpha = (ch) =>
+      (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z');
+
+    const len = rawHtml.length;
+    const lowerHtml = rawHtml.toLowerCase();
+    const out = [];
+    let i = 0;
+
+    function findClosingTag(tagLower, fromIdx) {
+      const target = `</${tagLower}`;
+      const targetLen = target.length;
+      let idx = fromIdx;
+      while (idx < len) {
+        const found = lowerHtml.indexOf(target, idx);
+        if (found === -1) return null;
+        const afterIdx = found + targetLen;
+        if (afterIdx >= len) {
+          return { start: found, end: len };
+        }
+        const nextCh = rawHtml[afterIdx];
+        if (nextCh === '>' || nextCh === '/' || isSpace(nextCh)) {
+          const gtIdx = rawHtml.indexOf('>', afterIdx);
+          return {
+            start: found,
+            end: gtIdx === -1 ? len : gtIdx + 1
+          };
+        }
+        idx = afterIdx;
+      }
+      return null;
+    }
+
+    while (i < len) {
+      const lt = rawHtml.indexOf('<', i);
+      if (lt === -1) {
+        out.push(rawHtml.slice(i));
+        break;
+      }
+      if (lt > i) {
+        out.push(rawHtml.slice(i, lt));
+      }
+      i = lt;
+
+      if (i + 1 >= len) {
+        out.push('<');
+        break;
+      }
+
+      const next1 = rawHtml[i + 1];
+
+      // Strip HTML comments
+      if (rawHtml.startsWith('<!--', i)) {
+        if (rawHtml.startsWith('<!-->', i)) {
+          i += 5;
+        } else if (rawHtml.startsWith('<!--->', i)) {
+          i += 6;
+        } else {
+          const endComment = rawHtml.indexOf('-->', i + 4);
+          i = endComment === -1 ? len : endComment + 3;
+        }
+        continue;
+      }
+
+      // Keep <!DOCTYPE ...> and strip bogus comments <!...>
+      if (next1 === '!') {
+        const gt = rawHtml.indexOf('>', i + 2);
+        const endPos = gt === -1 ? len : gt + 1;
+        if (lowerHtml.slice(i, i + 9) === '<!doctype') {
+          out.push(rawHtml.slice(i, endPos));
+        }
+        i = endPos;
+        continue;
+      }
+
+      // Strip processing instructions / bogus comments <?...>
+      if (next1 === '?') {
+        const gt = rawHtml.indexOf('>', i + 2);
+        i = gt === -1 ? len : gt + 1;
+        continue;
+      }
+
+      // End tag </...>
+      if (next1 === '/') {
+        if (i + 2 < len && isAsciiAlpha(rawHtml[i + 2])) {
+          let p = i + 2;
+          while (p < len && !isSpace(rawHtml[p]) && rawHtml[p] !== '>' && rawHtml[p] !== '/') {
+            p += 1;
+          }
+          const endTagName = lowerHtml.slice(i + 2, p);
+          const gt = rawHtml.indexOf('>', p);
+          i = gt === -1 ? len : gt + 1;
+          if (!STRIP_BLOCK_TAGS.has(endTagName)) {
+            out.push(`</${endTagName}>`);
+          }
+        } else {
+          const gt = rawHtml.indexOf('>', i + 2);
+          i = gt === -1 ? len : gt + 1;
+        }
+        continue;
+      }
+
+      if (!isAsciiAlpha(next1)) {
+        out.push('<');
+        i += 1;
+        continue;
+      }
+
+      let p = i + 1;
+      while (p < len && !isSpace(rawHtml[p]) && rawHtml[p] !== '>' && rawHtml[p] !== '/') {
+        p += 1;
+      }
+      const tagName = rawHtml.slice(i + 1, p);
+      const lowerTag = tagName.toLowerCase();
+
+      const attrs = [];
+      let selfClosing = false;
+
+      while (p < len) {
+        while (p < len && isSpace(rawHtml[p])) {
+          p += 1;
+        }
+        if (p >= len) break;
+
+        if (rawHtml[p] === '>') {
+          p += 1;
+          break;
+        }
+
+        if (rawHtml[p] === '/') {
+          p += 1;
+          while (p < len && isSpace(rawHtml[p])) {
+            p += 1;
+          }
+          if (p < len && rawHtml[p] === '>') {
+            selfClosing = true;
+            p += 1;
+            break;
+          }
+          continue;
+        }
+
+        const nameStart = p;
+        while (
+          p < len &&
+          !isSpace(rawHtml[p]) &&
+          rawHtml[p] !== '=' &&
+          rawHtml[p] !== '>' &&
+          rawHtml[p] !== '/'
+        ) {
+          p += 1;
+        }
+        const attrName = rawHtml.slice(nameStart, p);
+
+        while (p < len && isSpace(rawHtml[p])) {
+          p += 1;
+        }
+
+        let hasValue = false;
+        let attrValue = '';
+
+        if (p < len && rawHtml[p] === '=') {
+          hasValue = true;
+          p += 1;
+          while (p < len && isSpace(rawHtml[p])) {
+            p += 1;
+          }
+          if (p < len) {
+            const q = rawHtml[p];
+            if (q === '"' || q === "'") {
+              p += 1;
+              const valStart = p;
+              const closeQ = rawHtml.indexOf(q, p);
+              if (closeQ === -1) {
+                attrValue = rawHtml.slice(valStart);
+                p = len;
+              } else {
+                attrValue = rawHtml.slice(valStart, closeQ);
+                p = closeQ + 1;
+              }
+            } else if (rawHtml[p] !== '>') {
+              const valStart = p;
+              while (p < len && !isSpace(rawHtml[p]) && rawHtml[p] !== '>') {
+                p += 1;
+              }
+              attrValue = rawHtml.slice(valStart, p);
+            }
+          }
+        }
+
+        if (attrName) {
+          attrs.push({ name: attrName, hasValue, value: attrValue });
+        }
+      }
+
+      i = p;
+
+      if (STRIP_BLOCK_TAGS.has(lowerTag)) {
+        if (VOID_TAGS.has(lowerTag)) {
+          continue;
+        }
+        if (!RAW_STOP_TAGS.has(lowerTag) && selfClosing) {
+          continue;
+        }
+        const closeMatch = findClosingTag(lowerTag, i);
+        if (closeMatch) {
+          i = closeMatch.end;
+        } else if (RAW_STOP_TAGS.has(lowerTag)) {
+          i = len;
+        }
+        continue;
+      }
+
+      const serializedAttrs = [];
+      for (const attr of attrs) {
+        if (!/^[a-zA-Z_:][a-zA-Z0-9_.:-]*$/.test(attr.name)) {
+          continue;
+        }
+        const lowerAttr = attr.name.toLowerCase();
+        if (/^on[a-z0-9]+$/i.test(lowerAttr)) {
+          if (lowerAttr === 'onclick' && attr.hasValue && /favcat=/i.test(attr.value)) {
+            const safeVal = attr.value.replace(/"/g, '&quot;');
+            serializedAttrs.push(`data-eh-onclick="${safeVal}"`);
+          }
+          continue;
+        }
+
+        if (URL_ATTRS.has(lowerAttr) && attr.hasValue) {
+          const decoded = decodeNumericEntitiesForScheme(attr.value);
+          const compactScheme = decoded.replace(/[\u0000-\u0020]+/g, '').toLowerCase();
+          if (compactScheme.startsWith('javascript:') || compactScheme.startsWith('vbscript:')) {
+            serializedAttrs.push(`${attr.name}="#"`);
+            continue;
+          }
+        }
+
+        if (attr.hasValue) {
+          const safeVal = attr.value.replace(/"/g, '&quot;');
+          serializedAttrs.push(`${attr.name}="${safeVal}"`);
+        } else {
+          serializedAttrs.push(attr.name);
+        }
+      }
+
+      const attrStr = serializedAttrs.length > 0 ? ` ${serializedAttrs.join(' ')}` : '';
+      out.push(`<${tagName}${attrStr}${selfClosing ? ' /' : ''}>`);
+
+      if (RCDATA_TAGS.has(lowerTag) && !selfClosing) {
+        const closeMatch = findClosingTag(lowerTag, i);
+        if (closeMatch) {
+          out.push(rawHtml.slice(i, closeMatch.start));
+          out.push(`</${lowerTag}>`);
+          i = closeMatch.end;
+        } else {
+          out.push(rawHtml.slice(i));
+          i = len;
+        }
+      }
+    }
+
+    return out.join('');
+  }
+
   function parseFavoritesHtml(html, favcat, currentUrl, customParser) {
+    const safeHtml = sanitizeHtmlForDomParser(html);
     const doc = customParser
-      ? customParser(html)
-      : new DOMParser().parseFromString(html, 'text/html');
+      ? customParser(safeHtml)
+      : new DOMParser().parseFromString(safeHtml, 'text/html');
     return parseFavoritesDocument(doc, favcat, currentUrl, html);
   }
 
@@ -638,6 +934,7 @@
       parseFavoritesCategories,
       extractNextPageUrl,
       parseFavoritesDocument,
+      sanitizeHtmlForDomParser,
       parseFavoritesHtml,
       tryMergeIncrementalCategory,
       diffFavoritesSnapshots,
@@ -827,6 +1124,7 @@
     setEnableShortcutCopy: document.getElementById('setEnableShortcutCopy'),
     setEnableDomainSwapRedirect: document.getElementById('setEnableDomainSwapRedirect'),
     setIncrementalFavScan: document.getElementById('setIncrementalFavScan'),
+    setEnableFavCompactArchiver: document.getElementById('setEnableFavCompactArchiver'),
     setMirrorDomain: document.getElementById('setMirrorDomain'),
     setMirrorSourceScope: document.getElementById('setMirrorSourceScope'),
     setDomainSwapRedirectMode: document.getElementById('setDomainSwapRedirectMode'),
@@ -2352,6 +2650,9 @@
     if (els.setIncrementalFavScan) {
       els.setIncrementalFavScan.checked = d.incrementalFavScan !== false;
     }
+    if (els.setEnableFavCompactArchiver) {
+      els.setEnableFavCompactArchiver.checked = d.enableFavCompactArchiver !== false;
+    }
 
     const highlightLabel = d.highlightTagLabel || DEFAULT_HIGHLIGHT_LABEL;
     if (els.setTagStatsDesc) {
@@ -2946,6 +3247,7 @@
       ['setEnableShortcutCopy', 'enableShortcutCopy'],
       ['setEnableDomainSwapRedirect', 'enableDomainSwapRedirect'],
       ['setIncrementalFavScan', 'incrementalFavScan'],
+      ['setEnableFavCompactArchiver', 'enableFavCompactArchiver'],
       ['setRedirectExternalOnly', 'redirectExternalOnly'],
       ['setEnableExCookieManager', 'enableExCookieManager'],
       ['setAutoSyncEhToExCookie', 'autoSyncEhToExCookie'],

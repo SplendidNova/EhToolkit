@@ -9,6 +9,7 @@
     enableMirrorRedirect: false,
     enableExCookieManager: true,
     autoRedirectUnavailableToEx: true,
+    enableFavCompactArchiver: true,
     copyTargetDomain: 'exhentai.org',
     mirrorDomain: '',
     mirrorCopyTarget: 'exhentai.org',
@@ -481,6 +482,254 @@
     (document.body || document.documentElement).appendChild(card);
   }
 
+  const FAV_GALLERY_HREF_RE = /\/g\/(\d+)\/([0-9a-f]{10})(?:\/|$|\?|#)/i;
+  const archiverUrlCache = new Map();
+  let favTableObserver = null;
+  let isMutatingFavTable = false;
+
+  function isFavoritesPagePath(pathname) {
+    if (!pathname || typeof pathname !== 'string') return false;
+    const clean = pathname.split('?')[0].split('#')[0].toLowerCase().replace(/\/+$/, '');
+    return clean === '/favorites.php';
+  }
+
+  function extractArchiverUrlFromGalleryHtml(html, baseOrigin) {
+    if (!html || typeof html !== 'string') return null;
+    const originFallback =
+      baseOrigin ||
+      (typeof window !== 'undefined' && window.location && window.location.origin) ||
+      'https://exhentai.org';
+    const re = /((?:https?:\/\/[^\s'"<>]+)?\/?archiver\.php\?[^\s'"<>)]+)/gi;
+    const matches = html.matchAll(re);
+    for (const m of matches) {
+      const raw = String(m[1] || '').replace(/&amp;/gi, '&').trim();
+      if (!raw) continue;
+      try {
+        const parsed = new URL(raw, originFallback);
+        if (
+          (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+          parsed.pathname.toLowerCase().endsWith('/archiver.php') &&
+          parsed.searchParams.has('gid') &&
+          parsed.searchParams.has('token')
+        ) {
+          return parsed.toString();
+        }
+      } catch {
+        // Skip invalid URL match
+      }
+    }
+    return null;
+  }
+
+  function ensureFavArchiverStyles() {
+    if (document.getElementById('eh-fav-archiver-style')) return;
+    const style = document.createElement('style');
+    style.id = 'eh-fav-archiver-style';
+    style.textContent = `
+      th.eh-fav-archiver-col,
+      td.eh-fav-archiver-cell {
+        width: 56px;
+        min-width: 52px;
+        text-align: center !important;
+        vertical-align: middle !important;
+        white-space: nowrap !important;
+        padding: 3px 6px !important;
+      }
+      button.eh-fav-archiver-btn {
+        display: inline-block;
+        padding: 2px 8px;
+        font-size: 11px;
+        line-height: 1.5;
+        font-weight: 600;
+        border-radius: 4px;
+        border: 1px solid rgba(148, 163, 184, 0.55);
+        background: rgba(59, 130, 246, 0.14);
+        color: inherit;
+        cursor: pointer;
+        transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
+      }
+      button.eh-fav-archiver-btn:hover:not(:disabled) {
+        background: rgba(59, 130, 246, 0.3);
+        border-color: #3b82f6;
+      }
+      button.eh-fav-archiver-btn:disabled {
+        opacity: 0.55;
+        cursor: wait;
+      }
+    `;
+    (document.head || document.documentElement).appendChild(style);
+  }
+
+  function removeFavCompactArchiverUI() {
+    if (favTableObserver) {
+      favTableObserver.disconnect();
+      favTableObserver = null;
+    }
+    isMutatingFavTable = true;
+    try {
+      document.querySelectorAll('[data-eh-archiver-injected="1"]').forEach((node) => {
+        node.remove();
+      });
+      const styleEl = document.getElementById('eh-fav-archiver-style');
+      if (styleEl) styleEl.remove();
+    } finally {
+      isMutatingFavTable = false;
+    }
+  }
+
+  async function launchArchiverForGallery(galleryUrl, btnEl) {
+    if (!btnEl || btnEl.dataset.loading === '1') return;
+    btnEl.dataset.loading = '1';
+    btnEl.disabled = true;
+    btnEl.textContent = '获取中...';
+
+    try {
+      let archiverUrl = archiverUrlCache.get(galleryUrl) || '';
+      if (!archiverUrl) {
+        const res = await fetch(galleryUrl, { credentials: 'include' });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const contentType = (res.headers.get('content-type') || '').toLowerCase();
+        if (contentType.startsWith('image/')) {
+          throw new Error('站点返回 Sad Panda，请先同步或配置里站 Cookie');
+        }
+        if (!contentType.includes('text/html')) {
+          throw new Error('画廊页面返回异常内容');
+        }
+        const html = await res.text();
+        if (
+          html.includes('This page requires you to log on') ||
+          html.includes('You must be logged in') ||
+          html.includes('name="UserName"')
+        ) {
+          throw new Error('当前站点未登录或登录已失效');
+        }
+        if (
+          html.includes('This gallery has been removed or is unavailable') ||
+          html.includes('Gallery not found')
+        ) {
+          throw new Error('该画廊已被删除或当前域名不可访问');
+        }
+        archiverUrl = extractArchiverUrlFromGalleryHtml(html, window.location.origin);
+        if (!archiverUrl) {
+          throw new Error('未在画廊详情页找到 Archive Download 链接');
+        }
+        archiverUrlCache.set(galleryUrl, archiverUrl);
+      }
+
+      const resp = await sendBgMessage({
+        type: 'EH_OPEN_ARCHIVER_WINDOW',
+        url: archiverUrl
+      });
+      if (!resp || !resp.ok) {
+        const win = window.open(
+          archiverUrl,
+          'eh_archiver',
+          'scrollbars=yes,width=520,height=420'
+        );
+        if (!win) {
+          throw new Error((resp && resp.error) || '弹窗被浏览器拦截，请允许弹窗或重试');
+        }
+      }
+    } catch (err) {
+      showToast(
+        '启动 Archiver 下载失败',
+        err && err.message ? `${err.message} (${galleryUrl})` : galleryUrl,
+        true
+      );
+    } finally {
+      btnEl.dataset.loading = '0';
+      btnEl.disabled = false;
+      btnEl.textContent = '下载';
+    }
+  }
+
+  function injectFavCompactArchiverButtons(table) {
+    if (!table) return;
+    ensureFavArchiverStyles();
+    isMutatingFavTable = true;
+    try {
+      const rows = Array.from(table.querySelectorAll('tr'));
+      for (const tr of rows) {
+        if (tr.querySelector('th')) {
+          if (!tr.querySelector('th.eh-fav-archiver-col')) {
+            const th = document.createElement('th');
+            th.className = 'eh-fav-archiver-col';
+            th.setAttribute('data-eh-archiver-injected', '1');
+            th.textContent = '下载';
+            tr.appendChild(th);
+          }
+          continue;
+        }
+
+        if (tr.querySelector('td.eh-fav-archiver-cell')) continue;
+
+        const links = Array.from(tr.querySelectorAll('a[href]'));
+        let galleryUrl = '';
+        for (const a of links) {
+          const href = a.getAttribute('href') || '';
+          const m = href.match(FAV_GALLERY_HREF_RE);
+          if (m) {
+            galleryUrl = `${window.location.origin}/g/${m[1]}/${m[2].toLowerCase()}/`;
+            break;
+          }
+        }
+        if (!galleryUrl) continue;
+
+        const td = document.createElement('td');
+        td.className = 'eh-fav-archiver-cell';
+        td.setAttribute('data-eh-archiver-injected', '1');
+
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'eh-fav-archiver-btn';
+        btn.textContent = '下载';
+        btn.title = '启动 Archiver 打包下载 (等同画廊详情页 Archive Download)';
+        btn.addEventListener('click', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          launchArchiverForGallery(galleryUrl, btn);
+        });
+
+        td.appendChild(btn);
+        tr.appendChild(td);
+      }
+    } finally {
+      isMutatingFavTable = false;
+    }
+  }
+
+  function syncFavCompactArchiverUI() {
+    if (
+      currentSettings.enableFavCompactArchiver === false ||
+      !classifyHost(window.location.hostname, currentSettings) ||
+      !isFavoritesPagePath(window.location.pathname)
+    ) {
+      removeFavCompactArchiverUI();
+      return;
+    }
+
+    const table = document.querySelector('table.itg.gltc');
+    if (!table) {
+      removeFavCompactArchiverUI();
+      return;
+    }
+
+    injectFavCompactArchiverButtons(table);
+
+    if (favTableObserver) {
+      favTableObserver.disconnect();
+    }
+    favTableObserver = new MutationObserver(() => {
+      if (isMutatingFavTable) return;
+      if (currentSettings.enableFavCompactArchiver === false) return;
+      const t = document.querySelector('table.itg.gltc');
+      if (t) injectFavCompactArchiverButtons(t);
+    });
+    favTableObserver.observe(table, { childList: true, subtree: true });
+  }
+
   function maybeRunPageEnhancements() {
     if (pageCheckExecuted || !settingsLoaded) return;
     if (document.readyState === 'loading') return;
@@ -492,6 +741,7 @@
     } else if (kind === 'exhentai' && isSadPandaDocument(document)) {
       renderSadPandaHelper();
     }
+    syncFavCompactArchiverUI();
   }
 
   function loadSettings() {
@@ -547,6 +797,9 @@
             ...DEFAULT_CONTENT_SETTINGS,
             ...(changes[SETTINGS_KEY].newValue || {})
           };
+          if (document.readyState !== 'loading') {
+            syncFavCompactArchiverUI();
+          }
         }
       });
     }
@@ -610,7 +863,9 @@
       matchesShortcut,
       isUnavailableEhGalleryPage,
       isSadPandaDocument,
-      buildInnerSiteTargetUrl
+      buildInnerSiteTargetUrl,
+      isFavoritesPagePath,
+      extractArchiverUrlFromGalleryHtml
     };
   }
 })();

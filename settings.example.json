@@ -5,7 +5,8 @@
     "enableTagStats": true,
     "enableMirrorRedirect": false,
     "enableShortcutCopy": true,
-    "enableDomainSwapRedirect": false
+    "enableDomainSwapRedirect": false,
+    "enableFavCompactArchiver": true
   },
   "redirect": {
     "mirrorDomain": "",

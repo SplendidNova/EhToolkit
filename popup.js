@@ -27,6 +27,7 @@
     popupSyncCookieBtn: document.getElementById('popupSyncCookieBtn'),
     enableFavTransfer: document.getElementById('enableFavTransfer'),
     enableTagStats: document.getElementById('enableTagStats'),
+    enableFavCompactArchiver: document.getElementById('enableFavCompactArchiver'),
     tagStatsPopupDesc: document.getElementById('tagStatsPopupDesc'),
     enableMirrorRedirect: document.getElementById('enableMirrorRedirect'),
     mirrorDomain: document.getElementById('mirrorDomain'),
@@ -102,6 +103,9 @@
     if (!settings) return;
     els.enableFavTransfer.checked = Boolean(settings.enableFavTransfer);
     els.enableTagStats.checked = Boolean(settings.enableTagStats);
+    if (els.enableFavCompactArchiver) {
+      els.enableFavCompactArchiver.checked = settings.enableFavCompactArchiver !== false;
+    }
     if (els.tagStatsPopupDesc) {
       const label = settings.highlightTagLabel || 'female:stocking(s)';
       els.tagStatsPopupDesc.textContent = `去重列出 artist/group/parody 与 ${label}`;
@@ -260,6 +264,7 @@
     const toggleIds = [
       'enableFavTransfer',
       'enableTagStats',
+      'enableFavCompactArchiver',
       'enableMirrorRedirect',
       'enableShortcutCopy',
       'enableDomainSwapRedirect',

@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   enableMirrorRedirect: false,
   enableShortcutCopy: true,
   enableDomainSwapRedirect: false,
+  enableFavCompactArchiver: true,
 
   // 2. 域名与重定向参数 (redirect)
   mirrorDomain: '',
@@ -365,6 +366,12 @@ function mergeSettings(raw, baseDefaults = DEFAULT_SETTINGS) {
       src.enableDomainSwapRedirect !== undefined
         ? Boolean(src.enableDomainSwapRedirect)
         : Boolean(base.enableDomainSwapRedirect),
+    enableFavCompactArchiver:
+      src.enableFavCompactArchiver !== undefined
+        ? Boolean(src.enableFavCompactArchiver)
+        : base.enableFavCompactArchiver !== undefined
+          ? Boolean(base.enableFavCompactArchiver)
+          : true,
     domainSwapRedirectMode: resolvedSwapMode,
     redirectPriority: ['mirror', 'swap'].includes(src.redirectPriority)
       ? src.redirectPriority
@@ -488,7 +495,8 @@ function formatSettingsObjectForFile(rawSettings) {
       enableTagStats: s.enableTagStats,
       enableMirrorRedirect: s.enableMirrorRedirect,
       enableShortcutCopy: s.enableShortcutCopy,
-      enableDomainSwapRedirect: s.enableDomainSwapRedirect
+      enableDomainSwapRedirect: s.enableDomainSwapRedirect,
+      enableFavCompactArchiver: s.enableFavCompactArchiver
     },
     redirect: {
       mirrorDomain: s.mirrorDomain,
@@ -1720,6 +1728,72 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.webNavigation) {
           await chrome.tabs.create({ url: dashboardUrl });
         }
         sendResponse({ ok: true });
+      })();
+      return true;
+    }
+
+    if (msg.type === 'EH_OPEN_ARCHIVER_WINDOW') {
+      (async () => {
+        let parsed;
+        try {
+          parsed = new URL(String(msg.url || ''));
+        } catch {
+          sendResponse({ ok: false, error: '无效的 Archiver 链接' });
+          return;
+        }
+        if (
+          (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+          !parsed.pathname.toLowerCase().endsWith('/archiver.php')
+        ) {
+          sendResponse({ ok: false, error: '非法的 Archiver 地址' });
+          return;
+        }
+
+        const settings = await getSettings();
+        const hostKind = classifyHost(parsed.hostname, settings);
+        if (
+          settings.enableExCookieManager &&
+          (hostKind === 'exhentai' || (hostKind === 'mirror' && settings.syncCookieToMirror))
+        ) {
+          await ensureExhentaiCookies();
+        }
+
+        const popupWidth = 520;
+        const popupHeight = 420;
+        const createOpts = {
+          url: parsed.toString(),
+          type: 'popup',
+          width: popupWidth,
+          height: popupHeight,
+          focused: true
+        };
+
+        if (sender && sender.tab && sender.tab.windowId && chrome.windows && chrome.windows.get) {
+          try {
+            const parentWin = await chrome.windows.get(sender.tab.windowId);
+            if (parentWin && Number.isFinite(parentWin.left) && Number.isFinite(parentWin.width)) {
+              createOpts.left = Math.max(
+                0,
+                Math.round(parentWin.left + (parentWin.width - popupWidth) / 2)
+              );
+            }
+            if (parentWin && Number.isFinite(parentWin.top) && Number.isFinite(parentWin.height)) {
+              createOpts.top = Math.max(
+                0,
+                Math.round(parentWin.top + (parentWin.height - popupHeight) / 2)
+              );
+            }
+          } catch {
+            // Use default window position
+          }
+        }
+
+        try {
+          await chrome.windows.create(createOpts);
+          sendResponse({ ok: true });
+        } catch (err) {
+          sendResponse({ ok: false, error: err && err.message ? err.message : '打开弹窗失败' });
+        }
       })();
       return true;
     }

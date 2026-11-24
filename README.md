@@ -29,6 +29,10 @@
    - **表站不可见画廊自动跳里站**：打开 `e-hentai.org` 上的里站限定画廊遇到 *"This gallery has been removed or is unavailable."* 时，自动确保 Cookie 就绪并跳转至 `exhentai.org`（或配置的镜像站）查看。
    - **全链路带 Cookie 请求**：收藏夹跨账号读取/导入、以及标签统计 `exhentai.org/api.php` 调用均自动携带里站 Cookie，防止漏读里站限定画廊或元数据缺失。
 
+6. **收藏页 Compact 列表快捷 Archiver 下载（可开关）**
+   - 当浏览 E-Hentai / ExHentai / 镜像站的收藏夹页面 (`favorites.php`) 且处于 **Compact 列表模式** (`table.itg.gltc`) 时，自动在每行最右侧添加「下载」按钮。
+   - 点击「下载」按钮即按需提取画廊详情页的 `archiver.php` 地址并弹出官方 Archiver 窗口，效果等同进入画廊详情页点击 Archive Download；支持在弹窗与控制台随时开启或关闭。
+
 ## 配置文件说明 (`settings.json`)
 
 项目将所有自定义参数集中管理在根目录的 `settings.json` 中（仓库提供脱敏模板 `settings.example.json`，`settings.json` 已加入 `.gitignore` 防止个人镜像站域名泄露）：
@@ -45,7 +49,7 @@
 
 | 分组 | 主要参数 | 说明 |
 | :--- | :--- | :--- |
-| `features` | `enableFavTransfer`, `enableTagStats`, `enableMirrorRedirect`, `enableShortcutCopy`, `enableDomainSwapRedirect` | 五大核心子功能的独立默认开关 |
+| `features` | `enableFavTransfer`, `enableTagStats`, `enableMirrorRedirect`, `enableShortcutCopy`, `enableDomainSwapRedirect`, `enableFavCompactArchiver` | 六大核心子功能的独立默认开关 |
 | `redirect` | `mirrorDomain`, `mirrorSourceScope`, `domainSwapRedirectMode`, `redirectPriority`, `redirectExternalOnly`, `redirectDedupWindowMs` | 镜像站域名、表里站转换策略、优先级与重定向防重窗口 |
 | `shortcutCopy` | `copyTargetDomain`, `mirrorCopyTarget`, `customShortcut`, `copyDedupWindowMs`, `toastDurationMs`, `toastErrorDurationMs`, `badgeClearDelayMs` | 页面快捷键组合、复制目标域名、提示横幅与扩展角标停留时长 |
 | `favorites` | `defaultActiveSite`, `incrementalFavScan`, `readDelayMs`, `readDelayMinMs`, `importDelayMs`, `importDelayMinMs`, `importReverseOrder`, `importSkipExisting`, `importSaveEveryN`, `favPreviewLimit` | 默认操作站点、防封禁增量对比开关、收藏夹读取/导入请求间隔、倒序与断点续传策略、预览条数上限 |
