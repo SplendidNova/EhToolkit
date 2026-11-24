@@ -30,6 +30,7 @@
         <input type="text" id="customOriginInput" class="hidden" placeholder="https://example.org">
         <button id="detectSiteBtn" class="btn btn-ghost">自动检测标签页</button>
         <button id="topbarCookieBadge" class="cookie-pill" title="点击管理 ExHentai 里站 Cookie">里站 Cookie: 检测中...</button>
+        <button id="topbarSaveSettingsBtn" class="btn btn-accent">保存设置</button>
       </div>
     </header>
 
@@ -61,10 +62,16 @@
           </div>
 
           <div class="toolbar">
-            <label class="inline-field">
-              <span>翻页间隔 (ms)</span>
-              <input type="number" id="readDelayInput" value="350" min="100" max="60000" step="50">
-            </label>
+            <div class="inline-controls">
+              <label class="inline-field">
+                <span>翻页间隔 (ms)</span>
+                <input type="number" id="readDelayInput" value="350" min="100" max="60000" step="50">
+              </label>
+              <label class="checkbox-label" title="开启后自动对比上次读取快照，未变动分类跳过翻页，仅对增删画廊更新标签">
+                <input type="checkbox" id="incrementalScanCheck" checked>
+                <span>增量对比读取（防封禁：仅处理增删画廊）</span>
+              </label>
+            </div>
             <div class="btn-group">
               <button id="exportFavBackupBtn" class="btn btn-ghost" disabled>导出 JSON 备份</button>
               <label class="btn btn-ghost file-btn">
@@ -277,6 +284,17 @@
 
     <!-- Tab 3: Settings & Tester -->
     <section id="tab-settings" class="tab-panel">
+      <div id="settingsSaveBar" class="settings-save-bar">
+        <div class="save-bar-info">
+          <span id="settingsSaveBadge" class="save-state-dot saved"></span>
+          <span id="settingsSaveStatusText">修改控制台内任意设置参数后，请点击右侧「保存设置」按钮正式保存生效。</span>
+        </div>
+        <div class="btn-group">
+          <button type="button" id="discardSettingsBtn" class="btn btn-ghost" disabled>还原未保存修改</button>
+          <button type="button" id="saveAllSettingsBtn" class="btn btn-accent">保存设置</button>
+        </div>
+      </div>
+
       <div class="settings-grid">
         <div class="card">
           <h2>功能开关总控</h2>
@@ -328,6 +346,16 @@
               </div>
               <label class="switch">
                 <input type="checkbox" id="setEnableDomainSwapRedirect">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>防封禁：收藏夹与标签增量对比模式</strong>
+                <p class="muted">对比上次读取结果：完全一致则跳过请求标签，有增删仅读取和更新增删的画廊</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setIncrementalFavScan">
                 <span class="slider"></span>
               </label>
             </div>
@@ -568,7 +596,7 @@
                 <input type="number" id="setToastDurationMs" min="500" max="30000" step="200" title="提示条停留(ms)">
               </div>
             </label>
-            <span id="settingsActionNotice" class="muted">修改上方任意参数将自动保存；若直接编辑了本地 settings.json 文件，点击右上角「从 settings.json 重新加载」即可立即生效。</span>
+            <span id="settingsActionNotice" class="muted">修改参数后请点击「保存设置」按钮生效；若直接编辑了本地 settings.json 文件，可点击右上角「从 settings.json 重新加载」。</span>
           </div>
         </div>
       </div>

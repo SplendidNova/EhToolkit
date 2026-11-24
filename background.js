@@ -41,6 +41,7 @@ const DEFAULT_SETTINGS = {
 
   // 4. 收藏夹读取与跨账号迁移参数 (favorites)
   defaultActiveSite: 'https://exhentai.org',
+  incrementalFavScan: true,
   readDelayMs: 350,
   readDelayMinMs: 100,
   importDelayMs: 400,
@@ -402,6 +403,12 @@ function mergeSettings(raw, baseDefaults = DEFAULT_SETTINGS) {
     ),
     badgeClearDelayMs: clampInt(src.badgeClearDelayMs, base.badgeClearDelayMs, 500, 30000),
     defaultActiveSite,
+    incrementalFavScan:
+      src.incrementalFavScan !== undefined
+        ? Boolean(src.incrementalFavScan)
+        : base.incrementalFavScan !== undefined
+          ? Boolean(base.incrementalFavScan)
+          : true,
     readDelayMs: clampInt(src.readDelayMs, base.readDelayMs, readDelayMinMs, 60000),
     readDelayMinMs,
     importDelayMs: clampInt(src.importDelayMs, base.importDelayMs, importDelayMinMs, 60000),
@@ -502,6 +509,7 @@ function formatSettingsObjectForFile(rawSettings) {
     },
     favorites: {
       defaultActiveSite: s.defaultActiveSite,
+      incrementalFavScan: s.incrementalFavScan,
       readDelayMs: s.readDelayMs,
       readDelayMinMs: s.readDelayMinMs,
       importDelayMs: s.importDelayMs,
@@ -1724,10 +1732,14 @@ if (typeof chrome !== 'undefined' && chrome.runtime && chrome.webNavigation) {
 
     if (msg.type === 'EH_CONVERT_URL') {
       getSettings().then((settings) => {
+        const effective =
+          msg.previewSettings && typeof msg.previewSettings === 'object'
+            ? mergeSettings(msg.previewSettings, settings)
+            : settings;
         sendResponse({
           ok: true,
-          converted: convertGalleryUrl(msg.url, settings),
-          redirect: resolveRedirectDecision(msg.url, settings, null)
+          converted: convertGalleryUrl(msg.url, effective),
+          redirect: resolveRedirectDecision(msg.url, effective, null)
         });
       });
       return true;

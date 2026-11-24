@@ -60,13 +60,17 @@
     return false;
   }
 
-  function parseFavoritesCategories(doc) {
+  function parseFavoritesMeta(doc) {
     const names = {};
+    const counts = {};
     for (let i = 0; i < 10; i++) {
       names[i] = `Favorites ${i}`;
     }
-    if (!doc) return names;
+    if (!doc) {
+      return { names, counts: null, sortedByPublished: false };
+    }
 
+    let parsedCountTotal = 0;
     const fpNodes = Array.from(doc.querySelectorAll('.nosel .fp'));
     for (const node of fpNodes) {
       const onclick = node.getAttribute ? node.getAttribute('onclick') || '' : '';
@@ -82,6 +86,13 @@
       if (catIdx < 0 || catIdx > 9) continue;
 
       const divs = node.querySelectorAll ? Array.from(node.querySelectorAll('div')) : [];
+      if (divs.length >= 2) {
+        const rawNum = (divs[0].textContent || '').trim().replace(/,/g, '');
+        if (/^\d+$/.test(rawNum)) {
+          counts[catIdx] = Number(rawNum);
+          parsedCountTotal += 1;
+        }
+      }
       if (divs.length >= 3) {
         const label = (divs[divs.length - 1].textContent || '').trim();
         if (label) names[catIdx] = label;
@@ -90,7 +101,20 @@
         if (label && !/^\d+$/.test(label)) names[catIdx] = label;
       }
     }
-    return names;
+
+    const sortedByPublished = Boolean(
+      doc.querySelector('option[value="fs_p"][selected], a[href*="inline_set=fs_f"]')
+    );
+
+    return {
+      names,
+      counts: parsedCountTotal > 0 ? counts : null,
+      sortedByPublished
+    };
+  }
+
+  function parseFavoritesCategories(doc) {
+    return parseFavoritesMeta(doc).names;
   }
 
   function extractNextPageUrl(doc, currentUrl) {
@@ -124,16 +148,19 @@
   }
 
   function parseFavoritesDocument(doc, favcat, currentUrl, rawHtml) {
+    const meta = parseFavoritesMeta(doc);
     if (isLoginOrErrorPage(doc, rawHtml)) {
       return {
         loginRequired: true,
-        categoryNames: parseFavoritesCategories(doc),
+        categoryNames: meta.names,
+        categoryCounts: meta.counts,
+        sortedByPublished: meta.sortedByPublished,
         galleries: [],
         nextPageUrl: null
       };
     }
 
-    const categoryNames = parseFavoritesCategories(doc);
+    const categoryNames = meta.names;
     const scope = doc.querySelector('.itg') || doc;
     const anchors = Array.from(scope.querySelectorAll('a[href]'));
     const byGid = new Map();
@@ -204,8 +231,156 @@
     return {
       loginRequired: false,
       categoryNames,
+      categoryCounts: meta.counts,
+      sortedByPublished: meta.sortedByPublished,
       galleries: Array.from(byGid.values()),
       nextPageUrl: extractNextPageUrl(doc, currentUrl)
+    };
+  }
+
+  function tryMergeIncrementalCategory(collectedList, prevList, liveCount, sortedByPublished) {
+    if (!Array.isArray(prevList) || !Number.isInteger(liveCount) || liveCount < 0) {
+      return null;
+    }
+    if (liveCount === 0) {
+      return { merged: [], mode: 'empty', addedCount: 0 };
+    }
+    if (prevList.length === 0 || sortedByPublished) {
+      return null;
+    }
+
+    const delta = liveCount - prevList.length;
+    if (delta < 0) {
+      // Deletion occurred in this category; scan full category to pinpoint removed items
+      return null;
+    }
+
+    if (delta === 0) {
+      if (collectedList.length === 0 || collectedList.length > prevList.length) {
+        return null;
+      }
+      for (let i = 0; i < collectedList.length; i++) {
+        if (String(collectedList[i].gid) !== String(prevList[i].gid)) {
+          return null;
+        }
+      }
+      const merged = [
+        ...collectedList,
+        ...prevList.slice(collectedList.length)
+      ];
+      return { merged, mode: 'unchanged', addedCount: 0 };
+    }
+
+    // delta > 0: Check if the first `delta` items are new and the remaining overlap aligns with prevList[0..]
+    if (collectedList.length <= delta) {
+      return null;
+    }
+
+    const prevGidSet = new Set(prevList.map((g) => String(g.gid)));
+    for (let i = 0; i < delta; i++) {
+      if (prevGidSet.has(String(collectedList[i].gid))) {
+        return null;
+      }
+    }
+
+    const overlapLen = Math.min(collectedList.length - delta, prevList.length);
+    if (overlapLen < 1) {
+      return null;
+    }
+    for (let j = 0; j < overlapLen; j++) {
+      if (String(collectedList[delta + j].gid) !== String(prevList[j].gid)) {
+        return null;
+      }
+    }
+
+    const merged = [
+      ...collectedList.slice(0, delta + overlapLen),
+      ...prevList.slice(overlapLen)
+    ];
+    if (merged.length !== liveCount) {
+      return null;
+    }
+    return { merged, mode: 'added_prefix', addedCount: delta };
+  }
+
+  function diffFavoritesSnapshots(prevData, nextData) {
+    const hasPrev = Boolean(prevData && Array.isArray(prevData.categories));
+    const prevUnique = new Map();
+    const nextUnique = new Map();
+
+    if (hasPrev) {
+      for (const cat of prevData.categories) {
+        for (const g of cat.galleries || []) {
+          const gid = String(g.gid);
+          if (!prevUnique.has(gid)) {
+            prevUnique.set(gid, {
+              gid,
+              token: g.token,
+              title: g.title,
+              favcat: cat.favcat,
+              favnote: g.favnote || ''
+            });
+          }
+        }
+      }
+    }
+
+    if (nextData && Array.isArray(nextData.categories)) {
+      for (const cat of nextData.categories) {
+        for (const g of cat.galleries || []) {
+          const gid = String(g.gid);
+          if (!nextUnique.has(gid)) {
+            nextUnique.set(gid, {
+              gid,
+              token: g.token,
+              title: g.title,
+              favcat: cat.favcat,
+              favnote: g.favnote || ''
+            });
+          }
+        }
+      }
+    }
+
+    const addedGids = [];
+    const removedGids = [];
+    let unchangedCount = 0;
+    let metaChangedCount = 0;
+
+    for (const [gid, nextItem] of nextUnique.entries()) {
+      if (!prevUnique.has(gid)) {
+        addedGids.push(gid);
+      } else {
+        unchangedCount += 1;
+        const prevItem = prevUnique.get(gid);
+        if (prevItem.favcat !== nextItem.favcat || prevItem.favnote !== nextItem.favnote) {
+          metaChangedCount += 1;
+        }
+      }
+    }
+
+    if (hasPrev) {
+      for (const gid of prevUnique.keys()) {
+        if (!nextUnique.has(gid)) {
+          removedGids.push(gid);
+        }
+      }
+    }
+
+    const isGallerySetIdentical =
+      hasPrev && addedGids.length === 0 && removedGids.length === 0;
+    const isIdentical = isGallerySetIdentical && metaChangedCount === 0;
+
+    return {
+      hasPrev,
+      prevTotal: prevUnique.size,
+      nextTotal: nextUnique.size,
+      addedGids,
+      removedGids,
+      unchangedCount,
+      metaChangedCount,
+      isGallerySetIdentical,
+      isIdentical
     };
   }
 
@@ -459,10 +634,13 @@
   if (typeof globalThis !== 'undefined') {
     globalThis.__EH_DASHBOARD_EXPORTS__ = {
       isLoginOrErrorPage,
+      parseFavoritesMeta,
       parseFavoritesCategories,
       extractNextPageUrl,
       parseFavoritesDocument,
       parseFavoritesHtml,
+      tryMergeIncrementalCategory,
+      diffFavoritesSnapshots,
       computeTagStats,
       formatStatsSummaryText,
       chunkArray,
@@ -479,6 +657,8 @@
 
   // --- UI State & Controllers ---
   let settings = {};
+  let draftSettings = {};
+  let hasUnsavedChanges = false;
   let fileDefaults = null;
   let fileSource = 'settings.json';
   let latestCookieStatus = null;
@@ -486,6 +666,54 @@
   let importHistory = {};
   let tagCache = {};
   let currentStats = null;
+
+  function cloneSettingsObj(obj) {
+    return JSON.parse(JSON.stringify(obj || {}));
+  }
+
+  function getActiveSettings() {
+    return settings || {};
+  }
+
+  function getDraftSettings() {
+    return draftSettings && Object.keys(draftSettings).length > 0
+      ? draftSettings
+      : settings || {};
+  }
+
+  function flattenDraftInput(raw) {
+    if (!raw || typeof raw !== 'object') return {};
+    const sections = [
+      'features',
+      'redirect',
+      'shortcutCopy',
+      'favorites',
+      'tagStats',
+      'cookies',
+      'tester'
+    ];
+    const flat = {};
+    for (const sec of sections) {
+      if (raw[sec] && typeof raw[sec] === 'object' && !Array.isArray(raw[sec])) {
+        Object.assign(flat, raw[sec]);
+      }
+    }
+    for (const [k, v] of Object.entries(raw)) {
+      if (!sections.includes(k) && !k.startsWith('_')) {
+        flat[k] = v;
+      }
+    }
+    if (typeof flat.highlightTags === 'string') {
+      const parsedTags = flat.highlightTags
+        .split(/[,，\n]/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (parsedTags.length > 0) {
+        flat.highlightTags = Array.from(new Set(parsedTags));
+      }
+    }
+    return flat;
+  }
 
   let selectedCatSet = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
   let previewFavcat = 0;
@@ -500,6 +728,7 @@
     customOriginInput: document.getElementById('customOriginInput'),
     detectSiteBtn: document.getElementById('detectSiteBtn'),
     topbarCookieBadge: document.getElementById('topbarCookieBadge'),
+    topbarSaveSettingsBtn: document.getElementById('topbarSaveSettingsBtn'),
     transferDisabledBanner: document.getElementById('transferDisabledBanner'),
     enableFavTransferInlineBtn: document.getElementById('enableFavTransferInlineBtn'),
     tagsDisabledBanner: document.getElementById('tagsDisabledBanner'),
@@ -509,6 +738,7 @@
     readAllFavsBtn: document.getElementById('readAllFavsBtn'),
     stopReadFavsBtn: document.getElementById('stopReadFavsBtn'),
     readDelayInput: document.getElementById('readDelayInput'),
+    incrementalScanCheck: document.getElementById('incrementalScanCheck'),
     exportFavBackupBtn: document.getElementById('exportFavBackupBtn'),
     importFavBackupInput: document.getElementById('importFavBackupInput'),
     clearFavCacheBtn: document.getElementById('clearFavCacheBtn'),
@@ -585,12 +815,18 @@
     tagResultTbody: document.getElementById('tagResultTbody'),
 
     // Tab 3 Settings
+    settingsSaveBar: document.getElementById('settingsSaveBar'),
+    settingsSaveBadge: document.getElementById('settingsSaveBadge'),
+    settingsSaveStatusText: document.getElementById('settingsSaveStatusText'),
+    discardSettingsBtn: document.getElementById('discardSettingsBtn'),
+    saveAllSettingsBtn: document.getElementById('saveAllSettingsBtn'),
     setEnableFavTransfer: document.getElementById('setEnableFavTransfer'),
     setEnableTagStats: document.getElementById('setEnableTagStats'),
     setTagStatsDesc: document.getElementById('setTagStatsDesc'),
     setEnableMirrorRedirect: document.getElementById('setEnableMirrorRedirect'),
     setEnableShortcutCopy: document.getElementById('setEnableShortcutCopy'),
     setEnableDomainSwapRedirect: document.getElementById('setEnableDomainSwapRedirect'),
+    setIncrementalFavScan: document.getElementById('setIncrementalFavScan'),
     setMirrorDomain: document.getElementById('setMirrorDomain'),
     setMirrorSourceScope: document.getElementById('setMirrorSourceScope'),
     setDomainSwapRedirectMode: document.getElementById('setDomainSwapRedirectMode'),
@@ -669,17 +905,19 @@
   }
 
   function getSamplePath() {
-    const p = (settings && settings.sampleGalleryPath) || DEFAULT_SAMPLE_GALLERY_PATH;
+    const d = getDraftSettings();
+    const p = (d && d.sampleGalleryPath) || DEFAULT_SAMPLE_GALLERY_PATH;
     return p.startsWith('/') ? p : `/${p}`;
   }
 
   function buildPresetUrl(kind) {
+    const d = getDraftSettings();
     const samplePath = getSamplePath();
     if (kind === 'e-hentai') {
       return `https://e-hentai.org${samplePath}`;
     }
     if (kind === 'mirror') {
-      const m = (settings && settings.mirrorDomain) || 'mirror.example.com';
+      const m = (d && d.mirrorDomain) || 'mirror.example.com';
       return `https://${m}${samplePath}`;
     }
     return `https://exhentai.org${samplePath}`;
@@ -797,11 +1035,61 @@
   }
 
   // --- Feature 1: Reading & Importing Favorites ---
-  async function fetchCategoryPages(origin, favcat, delayMs, signal, onPageProgress) {
+  let lastFavoritesDiff = null;
+
+  function resolveActiveMemberId(origin, cookieStatus) {
+    if (!cookieStatus) return '';
+    if (origin === 'https://exhentai.org' && cookieStatus.ex && cookieStatus.ex.memberId) {
+      return String(cookieStatus.ex.memberId);
+    }
+    if (origin === 'https://e-hentai.org' && cookieStatus.eh && cookieStatus.eh.memberId) {
+      return String(cookieStatus.eh.memberId);
+    }
+    return String(
+      (cookieStatus.ex && cookieStatus.ex.memberId) ||
+        (cookieStatus.eh && cookieStatus.eh.memberId) ||
+        ''
+    );
+  }
+
+  async function fetchCategoryPages(
+    origin,
+    favcat,
+    delayMs,
+    signal,
+    onPageProgress,
+    incrementalOpts
+  ) {
+    const useIncremental = Boolean(incrementalOpts && incrementalOpts.enabled);
+    const prevList =
+      useIncremental && Array.isArray(incrementalOpts.prevGalleries)
+        ? incrementalOpts.prevGalleries
+        : null;
+    let knownCounts = (incrementalOpts && incrementalOpts.knownCounts) || null;
+    let knownNames = (incrementalOpts && incrementalOpts.knownNames) || null;
+
+    if (
+      useIncremental &&
+      knownCounts &&
+      Number.isInteger(knownCounts[favcat]) &&
+      knownCounts[favcat] === 0
+    ) {
+      return {
+        favcat,
+        name: (knownNames && knownNames[favcat]) || `Favorites ${favcat}`,
+        galleries: [],
+        categoryNames: knownNames,
+        categoryCounts: knownCounts,
+        pagesFetched: 0,
+        incrementalMode: 'empty_skip'
+      };
+    }
+
     let nextUrl = `${origin}/favorites.php?favcat=${favcat}`;
     const visited = new Set();
     const galleryMap = new Map();
-    let categoryNames = null;
+    let categoryNames = knownNames;
+    let categoryCounts = knownCounts;
     let pageNum = 0;
 
     while (nextUrl && !visited.has(nextUrl)) {
@@ -831,13 +1119,42 @@
         );
       }
 
-      if (!categoryNames) {
+      if (parsed.categoryNames) {
         categoryNames = parsed.categoryNames;
+      }
+      if (parsed.categoryCounts) {
+        categoryCounts = parsed.categoryCounts;
       }
 
       for (const item of parsed.galleries) {
         if (!galleryMap.has(item.gid)) {
           galleryMap.set(item.gid, item);
+        }
+      }
+
+      const liveCount =
+        categoryCounts && Number.isInteger(categoryCounts[favcat])
+          ? categoryCounts[favcat]
+          : null;
+
+      if (useIncremental && prevList && parsed.nextPageUrl) {
+        const mergedAttempt = tryMergeIncrementalCategory(
+          Array.from(galleryMap.values()),
+          prevList,
+          liveCount,
+          Boolean(parsed.sortedByPublished)
+        );
+        if (mergedAttempt) {
+          return {
+            favcat,
+            name: (categoryNames && categoryNames[favcat]) || `Favorites ${favcat}`,
+            galleries: mergedAttempt.merged,
+            categoryNames,
+            categoryCounts,
+            pagesFetched: pageNum,
+            incrementalMode: mergedAttempt.mode,
+            addedInCat: mergedAttempt.addedCount
+          };
         }
       }
 
@@ -850,21 +1167,31 @@
     return {
       favcat,
       name: (categoryNames && categoryNames[favcat]) || `Favorites ${favcat}`,
-      galleries: Array.from(galleryMap.values())
+      galleries: Array.from(galleryMap.values()),
+      categoryNames,
+      categoryCounts,
+      pagesFetched: pageNum,
+      incrementalMode: 'full'
     };
   }
 
   async function runReadAllFavorites(silentIfSuccess = false) {
-    if (!settings.enableFavTransfer && !silentIfSuccess) {
-      appendImportLog('功能 1 当前已关闭，请先开启后再读取收藏夹', 'warn');
+    const activeCfg = getActiveSettings();
+    if (!activeCfg.enableFavTransfer && !silentIfSuccess) {
+      appendImportLog('功能 1 当前已关闭，请先开启并保存设置后再读取收藏夹', 'warn');
       return null;
     }
 
     const origin = getActiveOrigin();
-    const minDelay = Number(settings.readDelayMinMs) || 100;
-    const defaultDelay = Number(settings.readDelayMs) || 350;
+    const minDelay = Number(activeCfg.readDelayMinMs) || 100;
+    const defaultDelay = Number(activeCfg.readDelayMs) || 350;
     const delayMs = Math.max(minDelay, Number(els.readDelayInput.value) || defaultDelay);
+    const incrementalSettingEnabled = els.incrementalScanCheck
+      ? Boolean(els.incrementalScanCheck.checked)
+      : activeCfg.incrementalFavScan !== false;
+
     readAbort = new AbortController();
+    lastFavoritesDiff = null;
 
     els.readAllFavsBtn.disabled = true;
     els.stopReadFavsBtn.classList.remove('hidden');
@@ -889,9 +1216,37 @@
       }
     }
 
-    appendImportLog(`开始从 ${origin} 读取 10 个收藏夹 (favcat 0~9)...`, 'info');
+    const activeMemberId = resolveActiveMemberId(origin, latestCookieStatus);
+    const prevSnapshot = favoritesData;
+    const canIncrementalCompare = Boolean(
+      incrementalSettingEnabled &&
+        prevSnapshot &&
+        Array.isArray(prevSnapshot.categories) &&
+        prevSnapshot.sourceOrigin === origin &&
+        (!activeMemberId ||
+          !prevSnapshot.sourceMemberId ||
+          prevSnapshot.sourceMemberId === activeMemberId)
+    );
 
+    appendImportLog(
+      canIncrementalCompare
+        ? `开始从 ${origin} 增量对比扫描 10 个收藏夹（防封禁模式：未变动分页自动跳过）...`
+        : `开始从 ${origin} 完整读取 10 个收藏夹 (favcat 0~9)...`,
+      'info'
+    );
+
+    const prevCatMap = new Map();
+    if (canIncrementalCompare) {
+      for (const c of prevSnapshot.categories) {
+        prevCatMap.set(Number(c.favcat), Array.isArray(c.galleries) ? c.galleries : []);
+      }
+    }
+
+    let knownCounts = null;
+    let knownNames = null;
+    let totalPagesFetched = 0;
     const categories = [];
+
     try {
       for (let favcat = 0; favcat < 10; favcat++) {
         const result = await fetchCategoryPages(
@@ -901,33 +1256,102 @@
           readAbort.signal,
           (pageNum) => {
             const pct = Math.round(((favcat + 0.3) / 10) * 100);
-            els.readStatusText.textContent = `正在读取 favcat ${favcat} (第 ${pageNum} 页)...`;
+            els.readStatusText.textContent = `正在扫描 favcat ${favcat} (第 ${pageNum} 页)...`;
             els.readPercentText.textContent = `${pct}%`;
             els.readProgressFill.style.width = `${pct}%`;
+          },
+          {
+            enabled: canIncrementalCompare,
+            prevGalleries: prevCatMap.get(favcat) || null,
+            knownCounts,
+            knownNames
           }
         );
-        categories.push(result);
+
+        if (result.categoryCounts) knownCounts = result.categoryCounts;
+        if (result.categoryNames) knownNames = result.categoryNames;
+        totalPagesFetched += result.pagesFetched || 0;
+
+        categories.push({
+          favcat: result.favcat,
+          name: result.name,
+          galleries: result.galleries
+        });
+
+        let modeNote = '';
+        if (result.incrementalMode === 'empty_skip') {
+          modeNote = '（空收藏夹，0 请求跳过）';
+        } else if (result.incrementalMode === 'unchanged') {
+          modeNote = `（第 1 页对比未变动，已跳过后续翻页）`;
+        } else if (result.incrementalMode === 'added_prefix') {
+          modeNote = `（增量识别新增 +${result.addedInCat} 本，已跳过后续翻页）`;
+        }
+
         appendImportLog(
-          `读取完成 favcat ${favcat} [${result.name}]：共 ${result.galleries.length} 个画廊`,
+          `读取完成 favcat ${favcat} [${result.name}]：共 ${result.galleries.length} 个画廊${modeNote}`,
           'ok'
         );
         const pctDone = Math.round(((favcat + 1) / 10) * 100);
         els.readPercentText.textContent = `${pctDone}%`;
         els.readProgressFill.style.width = `${pctDone}%`;
 
-        if (favcat < 9) {
-          await sleep(delayMs);
+        if (favcat < 9 && result.pagesFetched > 0) {
+          const nextIsZeroSkip =
+            canIncrementalCompare &&
+            knownCounts &&
+            Number.isInteger(knownCounts[favcat + 1]) &&
+            knownCounts[favcat + 1] === 0;
+          if (!nextIsZeroSkip) {
+            await sleep(delayMs);
+          }
         }
       }
 
-      favoritesData = {
+      const nextFavoritesData = {
         exportedAt: new Date().toISOString(),
         sourceOrigin: origin,
+        sourceMemberId: activeMemberId || '',
         categories
       };
+
+      const diff = diffFavoritesSnapshots(
+        canIncrementalCompare ? prevSnapshot : null,
+        nextFavoritesData
+      );
+      lastFavoritesDiff = diff;
+      favoritesData = nextFavoritesData;
       await chrome.storage.local.set({ [FAVORITES_STORAGE_KEY]: favoritesData });
+
+      // Remove deleted galleries from tagCache when syncing the same account
+      if (diff.hasPrev && diff.removedGids.length > 0) {
+        let removedCacheCount = 0;
+        for (const gid of diff.removedGids) {
+          if (tagCache && Object.prototype.hasOwnProperty.call(tagCache, gid)) {
+            delete tagCache[gid];
+            removedCacheCount += 1;
+          }
+        }
+        if (removedCacheCount > 0) {
+          await chrome.storage.local.set({ [TAG_CACHE_KEY]: tagCache });
+        }
+      }
+
       selectedCatSet = new Set([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-      els.readStatusText.textContent = '10 个收藏夹全部读取完成！';
+
+      if (diff.hasPrev) {
+        if (diff.isGallerySetIdentical) {
+          const msg = `对比完成：与上次读取完全一致（共 ${diff.nextTotal} 本去重画廊，本次仅请求 ${totalPagesFetched} 页）！`;
+          els.readStatusText.textContent = msg;
+          appendImportLog(msg, 'ok');
+        } else {
+          const msg = `增量对比完成：新增 +${diff.addedGids.length} 本，减少 -${diff.removedGids.length} 本，未变动 ${diff.unchangedCount} 本（本次共请求 ${totalPagesFetched} 页）！`;
+          els.readStatusText.textContent = msg;
+          appendImportLog(msg, 'ok');
+        }
+      } else {
+        els.readStatusText.textContent = `10 个收藏夹首次完整读取完成（共 ${diff.nextTotal} 本去重画廊，请求 ${totalPagesFetched} 页）！`;
+      }
+
       renderFavoritesView();
       refreshTagStatsView();
       return favoritesData;
@@ -1391,20 +1815,22 @@
   }
 
   async function runTagFetch(scanFavoritesFirst) {
-    if (!settings.enableTagStats) {
-      els.tagResultNotice.textContent = '功能 2 当前已关闭，请先开启后再统计标签';
+    const activeCfg = getActiveSettings();
+    if (!activeCfg.enableTagStats) {
+      els.tagResultNotice.textContent = '功能 2 当前已关闭，请先开启并保存设置后再统计标签';
       return;
     }
 
+    let scanDiff = null;
     if (scanFavoritesFirst) {
       const scanned = await runReadAllFavorites(true);
       if (!scanned) return;
-    }
-
-    if (!favoritesData || !Array.isArray(favoritesData.categories)) {
+      scanDiff = lastFavoritesDiff;
+    } else if (!favoritesData || !Array.isArray(favoritesData.categories)) {
       els.tagResultNotice.textContent = '当前尚未读取收藏夹，正在自动扫描当前站点收藏夹...';
       const scanned = await runReadAllFavorites(true);
       if (!scanned) return;
+      scanDiff = lastFavoritesDiff;
     }
 
     const uniqueMap = new Map();
@@ -1422,12 +1848,29 @@
     }
 
     const allGalleries = Array.from(uniqueMap.values());
+
+    // When favorites snapshot is 100% identical to previous scan and no uncached items remain, skip API completely!
     const pending = allGalleries.filter((g) => !tagCache[g.gid] || tagCache[g.gid].error);
 
     refreshTagStatsView();
+    if (scanDiff && scanDiff.isGallerySetIdentical && pending.length === 0) {
+      els.tagProgressBox.classList.remove('hidden');
+      const skipMsg = `对比判断：本次收藏夹与上次读取完全一致（共 ${allGalleries.length} 个去重画廊无增删），已跳过标签 API 请求！`;
+      els.tagStatusText.textContent = skipMsg;
+      els.tagResultNotice.textContent = skipMsg;
+      els.tagPercentText.textContent = '100%';
+      els.tagProgressFill.style.width = '100%';
+      return;
+    }
+
     if (pending.length === 0) {
       els.tagProgressBox.classList.remove('hidden');
-      els.tagStatusText.textContent = `全部 ${allGalleries.length} 个收藏画廊均已命中缓存，统计已完成！`;
+      const doneMsg =
+        scanDiff && scanDiff.hasPrev && scanDiff.removedGids.length > 0
+          ? `增量更新完成：已同步移除 ${scanDiff.removedGids.length} 个减少的画廊（无新增画廊），剩余 ${allGalleries.length} 个画廊均命中缓存，无需请求 API！`
+          : `全部 ${allGalleries.length} 个收藏画廊均已命中缓存，统计已完成！`;
+      els.tagStatusText.textContent = doneMsg;
+      els.tagResultNotice.textContent = doneMsg;
       els.tagPercentText.textContent = '100%';
       els.tagProgressFill.style.width = '100%';
       return;
@@ -1441,12 +1884,12 @@
     }
     const exCookieReady = Boolean(latestCookieStatus && latestCookieStatus.exReady);
 
-    const minDelay = Number(settings.tagDelayMinMs) || 200;
-    const defaultDelay = Number(settings.tagDelayMs) || 600;
+    const minDelay = Number(activeCfg.tagDelayMinMs) || 200;
+    const defaultDelay = Number(activeCfg.tagDelayMs) || 600;
     const delayMs = Math.max(minDelay, Number(els.tagDelayInput.value) || defaultDelay);
-    const batchSize = Math.min(25, Math.max(1, Number(settings.apiBatchSize) || 25));
-    const cooldownEvery = Number(settings.tagCooldownEveryBatches) || 0;
-    const cooldownExtraMs = Number(settings.tagCooldownExtraMs) || 0;
+    const batchSize = Math.min(25, Math.max(1, Number(activeCfg.apiBatchSize) || 25));
+    const cooldownEvery = Number(activeCfg.tagCooldownEveryBatches) || 0;
+    const cooldownExtraMs = Number(activeCfg.tagCooldownExtraMs) || 0;
     const batches = chunkArray(pending, batchSize);
 
     tagController.state = 'running';
@@ -1459,6 +1902,11 @@
     els.stopTagFetchBtn.classList.remove('hidden');
     els.tagProgressBox.classList.remove('hidden');
 
+    const diffPrefix =
+      scanDiff && scanDiff.hasPrev
+        ? `增量对比（新增 +${scanDiff.addedGids.length}，减少 -${scanDiff.removedGids.length}）：仅请求 ${pending.length} 本待更新画廊标签`
+        : `正在获取 ${pending.length} 本未缓存画廊标签`;
+
     let processed = 0;
 
     try {
@@ -1468,7 +1916,7 @@
         if (tagController.aborted) break;
 
         const batch = batches[b];
-        els.tagStatusText.textContent = `正在获取标签第 ${b + 1}/${batches.length} 批 (${processed}/${pending.length})...`;
+        els.tagStatusText.textContent = `${diffPrefix} — 第 ${b + 1}/${batches.length} 批 (${processed}/${pending.length})...`;
 
         const gmetadataList = await requestGdataBatch(origin, batch, exCookieReady);
         for (const meta of gmetadataList) {
@@ -1863,28 +2311,65 @@
     }
   }
 
-  function renderSettingsControls() {
-    els.setEnableFavTransfer.checked = Boolean(settings.enableFavTransfer);
-    els.setEnableTagStats.checked = Boolean(settings.enableTagStats);
-    els.setEnableMirrorRedirect.checked = Boolean(settings.enableMirrorRedirect);
-    els.setEnableShortcutCopy.checked = Boolean(settings.enableShortcutCopy);
-    els.setEnableDomainSwapRedirect.checked = Boolean(settings.enableDomainSwapRedirect);
+  function renderSaveBarState(customStatusMsg) {
+    if (els.settingsSaveBar) {
+      els.settingsSaveBar.classList.toggle('is-dirty', hasUnsavedChanges);
+    }
+    if (els.settingsSaveBadge) {
+      els.settingsSaveBadge.classList.toggle('dirty', hasUnsavedChanges);
+    }
+    if (els.discardSettingsBtn) {
+      els.discardSettingsBtn.disabled = !hasUnsavedChanges;
+    }
+    if (els.saveAllSettingsBtn) {
+      els.saveAllSettingsBtn.textContent = hasUnsavedChanges ? '保存设置 (有未保存更改)' : '保存设置';
+      els.saveAllSettingsBtn.classList.toggle('btn-unsaved', hasUnsavedChanges);
+    }
+    if (els.topbarSaveSettingsBtn) {
+      els.topbarSaveSettingsBtn.textContent = hasUnsavedChanges ? '保存设置 *' : '保存设置';
+      els.topbarSaveSettingsBtn.classList.toggle('btn-unsaved', hasUnsavedChanges);
+    }
+    if (els.settingsSaveStatusText) {
+      if (customStatusMsg) {
+        els.settingsSaveStatusText.textContent = customStatusMsg;
+      } else if (hasUnsavedChanges) {
+        els.settingsSaveStatusText.textContent =
+          '检测到未保存的设置更改，请点击右侧「保存设置」按钮使其正式保存生效。';
+      } else {
+        els.settingsSaveStatusText.textContent =
+          '修改控制台内任意设置参数后，请点击右侧「保存设置」按钮正式保存生效。';
+      }
+    }
+  }
 
-    const highlightLabel = settings.highlightTagLabel || DEFAULT_HIGHLIGHT_LABEL;
+  function renderSettingsControls() {
+    const d = getDraftSettings();
+    els.setEnableFavTransfer.checked = Boolean(d.enableFavTransfer);
+    els.setEnableTagStats.checked = Boolean(d.enableTagStats);
+    els.setEnableMirrorRedirect.checked = Boolean(d.enableMirrorRedirect);
+    els.setEnableShortcutCopy.checked = Boolean(d.enableShortcutCopy);
+    els.setEnableDomainSwapRedirect.checked = Boolean(d.enableDomainSwapRedirect);
+    if (els.setIncrementalFavScan) {
+      els.setIncrementalFavScan.checked = d.incrementalFavScan !== false;
+    }
+
+    const highlightLabel = d.highlightTagLabel || DEFAULT_HIGHLIGHT_LABEL;
     if (els.setTagStatsDesc) {
       els.setTagStatsDesc.textContent = `统计不重复 artist / group / parody 与 ${highlightLabel}`;
     }
 
-    els.setMirrorDomain.value = settings.mirrorDomain || '';
-    els.setMirrorSourceScope.value = settings.mirrorSourceScope || 'both';
-    els.setDomainSwapRedirectMode.value = settings.domainSwapRedirectMode || 'e2ex';
-    els.setRedirectPriority.value = settings.redirectPriority || 'mirror';
-    els.setRedirectExternalOnly.checked = Boolean(settings.redirectExternalOnly);
+    if (document.activeElement !== els.setMirrorDomain) {
+      els.setMirrorDomain.value = d.mirrorDomain || '';
+    }
+    els.setMirrorSourceScope.value = d.mirrorSourceScope || 'both';
+    els.setDomainSwapRedirectMode.value = d.domainSwapRedirectMode || 'e2ex';
+    els.setRedirectPriority.value = d.redirectPriority || 'mirror';
+    els.setRedirectExternalOnly.checked = Boolean(d.redirectExternalOnly);
 
-    els.setCopyTargetDomain.value = settings.copyTargetDomain || 'exhentai.org';
+    els.setCopyTargetDomain.value = d.copyTargetDomain || 'exhentai.org';
     els.setShortcutInput.value =
-      (settings.customShortcut && settings.customShortcut.label) || 'Alt + C';
-    els.setMirrorCopyTarget.value = settings.mirrorCopyTarget || 'exhentai.org';
+      (d.customShortcut && d.customShortcut.label) || 'Alt + C';
+    els.setMirrorCopyTarget.value = d.mirrorCopyTarget || 'exhentai.org';
     els.setMirrorCopyTargetRow.classList.toggle(
       'hidden',
       els.setCopyTargetDomain.value !== 'swap'
@@ -1892,101 +2377,103 @@
 
     // Sync operational inputs in Tab 1 & Tab 2
     if (document.activeElement !== els.readDelayInput) {
-      els.readDelayInput.min = String(settings.readDelayMinMs || 100);
-      els.readDelayInput.value = String(settings.readDelayMs || 350);
+      els.readDelayInput.min = String(d.readDelayMinMs || 100);
+      els.readDelayInput.value = String(d.readDelayMs || 350);
+    }
+    if (els.incrementalScanCheck) {
+      els.incrementalScanCheck.checked = d.incrementalFavScan !== false;
     }
     if (document.activeElement !== els.importDelayInput) {
-      els.importDelayInput.min = String(settings.importDelayMinMs || 150);
-      els.importDelayInput.value = String(settings.importDelayMs || 400);
+      els.importDelayInput.min = String(d.importDelayMinMs || 150);
+      els.importDelayInput.value = String(d.importDelayMs || 400);
     }
     els.reverseOrderCheck.checked =
-      settings.importReverseOrder !== undefined ? Boolean(settings.importReverseOrder) : true;
+      d.importReverseOrder !== undefined ? Boolean(d.importReverseOrder) : true;
     els.skipImportedCheck.checked =
-      settings.importSkipExisting !== undefined ? Boolean(settings.importSkipExisting) : true;
+      d.importSkipExisting !== undefined ? Boolean(d.importSkipExisting) : true;
 
     if (document.activeElement !== els.tagDelayInput) {
-      els.tagDelayInput.min = String(settings.tagDelayMinMs || 200);
-      els.tagDelayInput.value = String(settings.tagDelayMs || 600);
+      els.tagDelayInput.min = String(d.tagDelayMinMs || 200);
+      els.tagDelayInput.value = String(d.tagDelayMs || 600);
     }
 
     // Sync advanced controls in Tab 3
     if (els.fileSettingsSourceText) {
-      els.fileSettingsSourceText.textContent = `当前默认基准配置文件：${fileSource}（支持编辑本地 settings.json 后重新加载，或将当前界面配置导出为 settings.json）。`;
+      els.fileSettingsSourceText.textContent = `当前默认基准配置文件：${fileSource}（修改参数后需点击「保存设置」生效；也支持从本地 settings.json 重新加载或导出）。`;
     }
     if (els.setHighlightTags && document.activeElement !== els.setHighlightTags) {
-      els.setHighlightTags.value = Array.isArray(settings.highlightTags)
-        ? settings.highlightTags.join(', ')
+      els.setHighlightTags.value = Array.isArray(d.highlightTags)
+        ? d.highlightTags.join(', ')
         : DEFAULT_HIGHLIGHT_TAGS.join(', ');
     }
     if (els.setHighlightTagLabel && document.activeElement !== els.setHighlightTagLabel) {
       els.setHighlightTagLabel.value = highlightLabel;
     }
     if (els.setSampleGalleryPath && document.activeElement !== els.setSampleGalleryPath) {
-      els.setSampleGalleryPath.value = settings.sampleGalleryPath || DEFAULT_SAMPLE_GALLERY_PATH;
+      els.setSampleGalleryPath.value = d.sampleGalleryPath || DEFAULT_SAMPLE_GALLERY_PATH;
     }
     if (els.setApiBatchSize && document.activeElement !== els.setApiBatchSize) {
-      els.setApiBatchSize.value = String(settings.apiBatchSize || 25);
+      els.setApiBatchSize.value = String(d.apiBatchSize || 25);
     }
     if (
       els.setTagCooldownEveryBatches &&
       document.activeElement !== els.setTagCooldownEveryBatches
     ) {
       els.setTagCooldownEveryBatches.value = String(
-        settings.tagCooldownEveryBatches !== undefined ? settings.tagCooldownEveryBatches : 5
+        d.tagCooldownEveryBatches !== undefined ? d.tagCooldownEveryBatches : 5
       );
     }
     if (els.setTagCooldownExtraMs && document.activeElement !== els.setTagCooldownExtraMs) {
       els.setTagCooldownExtraMs.value = String(
-        settings.tagCooldownExtraMs !== undefined ? settings.tagCooldownExtraMs : 2000
+        d.tagCooldownExtraMs !== undefined ? d.tagCooldownExtraMs : 2000
       );
     }
     if (els.setRedirectDedupWindowMs && document.activeElement !== els.setRedirectDedupWindowMs) {
-      els.setRedirectDedupWindowMs.value = String(settings.redirectDedupWindowMs || 6000);
+      els.setRedirectDedupWindowMs.value = String(d.redirectDedupWindowMs || 6000);
     }
     if (els.setCopyDedupWindowMs && document.activeElement !== els.setCopyDedupWindowMs) {
-      els.setCopyDedupWindowMs.value = String(settings.copyDedupWindowMs || 400);
+      els.setCopyDedupWindowMs.value = String(d.copyDedupWindowMs || 400);
     }
     if (els.setToastDurationMs && document.activeElement !== els.setToastDurationMs) {
-      els.setToastDurationMs.value = String(settings.toastDurationMs || 3200);
+      els.setToastDurationMs.value = String(d.toastDurationMs || 3200);
     }
 
     if (els.setEnableExCookieManager) {
       els.setEnableExCookieManager.checked =
-        settings.enableExCookieManager !== undefined
-          ? Boolean(settings.enableExCookieManager)
-          : true;
+        d.enableExCookieManager !== undefined ? Boolean(d.enableExCookieManager) : true;
     }
     if (els.setAutoSyncEhToExCookie) {
       els.setAutoSyncEhToExCookie.checked =
-        settings.autoSyncEhToExCookie !== undefined ? Boolean(settings.autoSyncEhToExCookie) : true;
+        d.autoSyncEhToExCookie !== undefined ? Boolean(d.autoSyncEhToExCookie) : true;
     }
     if (els.setAutoRedirectUnavailableToEx) {
       els.setAutoRedirectUnavailableToEx.checked =
-        settings.autoRedirectUnavailableToEx !== undefined
-          ? Boolean(settings.autoRedirectUnavailableToEx)
+        d.autoRedirectUnavailableToEx !== undefined
+          ? Boolean(d.autoRedirectUnavailableToEx)
           : true;
     }
     if (els.setPreferExhentaiApi) {
       els.setPreferExhentaiApi.checked =
-        settings.preferExhentaiApi !== undefined ? Boolean(settings.preferExhentaiApi) : true;
+        d.preferExhentaiApi !== undefined ? Boolean(d.preferExhentaiApi) : true;
     }
     if (els.setSyncCookieToMirror) {
-      els.setSyncCookieToMirror.checked = Boolean(settings.syncCookieToMirror);
+      els.setSyncCookieToMirror.checked = Boolean(d.syncCookieToMirror);
     }
 
     if (els.setExCookieMemberId && document.activeElement !== els.setExCookieMemberId) {
-      els.setExCookieMemberId.value = settings.exCookieMemberId || '';
+      els.setExCookieMemberId.value = d.exCookieMemberId || '';
     }
     if (els.setExCookiePassHash && document.activeElement !== els.setExCookiePassHash) {
-      els.setExCookiePassHash.value = settings.exCookiePassHash || '';
+      els.setExCookiePassHash.value = d.exCookiePassHash || '';
     }
     if (els.setExCookieIgneous && document.activeElement !== els.setExCookieIgneous) {
-      els.setExCookieIgneous.value = settings.exCookieIgneous || '';
+      els.setExCookieIgneous.value = d.exCookieIgneous || '';
     }
     if (els.setExCookieSk && document.activeElement !== els.setExCookieSk) {
-      els.setExCookieSk.value = settings.exCookieSk || '';
+      els.setExCookieSk.value = d.exCookieSk || '';
     }
 
+    // Active runtime banners & stats reflect committed saved settings
     els.transferDisabledBanner.classList.toggle('hidden', Boolean(settings.enableFavTransfer));
     els.tagsDisabledBanner.classList.toggle('hidden', Boolean(settings.enableTagStats));
 
@@ -1994,20 +2481,112 @@
       els.testerUrlInput.value = buildPresetUrl('exhentai');
     }
 
+    renderSaveBarState();
     refreshSiteSelectLabels();
     renderFavoritesView();
     refreshTagStatsView();
     runUrlTester();
   }
 
-  async function savePartialSettings(partial) {
-    const resp = await sendMessage({ type: 'EH_SAVE_SETTINGS', settings: partial });
+  function stageSettings(partial, noticeMsg) {
+    const flat = flattenDraftInput(partial);
+    draftSettings = {
+      ...getDraftSettings(),
+      ...flat
+    };
+    hasUnsavedChanges = true;
+    renderSettingsControls();
+    if (noticeMsg) {
+      showSettingsNotice(noticeMsg);
+    }
+  }
+
+  function syncFormInputsIntoDraft() {
+    const next = { ...getDraftSettings() };
+    if (els.setMirrorDomain) next.mirrorDomain = els.setMirrorDomain.value;
+    if (els.setHighlightTags) {
+      const parsedTags = els.setHighlightTags.value
+        .split(/[,，\n]/)
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
+      if (parsedTags.length > 0) next.highlightTags = Array.from(new Set(parsedTags));
+    }
+    if (els.setHighlightTagLabel && els.setHighlightTagLabel.value.trim()) {
+      next.highlightTagLabel = els.setHighlightTagLabel.value.trim();
+    }
+    if (els.setSampleGalleryPath && els.setSampleGalleryPath.value.trim()) {
+      next.sampleGalleryPath = els.setSampleGalleryPath.value.trim();
+    }
+    if (els.readDelayInput) next.readDelayMs = Number(els.readDelayInput.value);
+    if (els.importDelayInput) next.importDelayMs = Number(els.importDelayInput.value);
+    if (els.tagDelayInput) next.tagDelayMs = Number(els.tagDelayInput.value);
+    if (els.setApiBatchSize) next.apiBatchSize = Number(els.setApiBatchSize.value);
+    if (els.setTagCooldownEveryBatches) {
+      next.tagCooldownEveryBatches = Number(els.setTagCooldownEveryBatches.value);
+    }
+    if (els.setTagCooldownExtraMs) {
+      next.tagCooldownExtraMs = Number(els.setTagCooldownExtraMs.value);
+    }
+    if (els.setRedirectDedupWindowMs) {
+      next.redirectDedupWindowMs = Number(els.setRedirectDedupWindowMs.value);
+    }
+    if (els.setCopyDedupWindowMs) {
+      next.copyDedupWindowMs = Number(els.setCopyDedupWindowMs.value);
+    }
+    if (els.setToastDurationMs) {
+      next.toastDurationMs = Number(els.setToastDurationMs.value);
+    }
+    if (els.setExCookieMemberId) next.exCookieMemberId = els.setExCookieMemberId.value.trim();
+    if (els.setExCookiePassHash) next.exCookiePassHash = els.setExCookiePassHash.value.trim();
+    if (els.setExCookieIgneous) next.exCookieIgneous = els.setExCookieIgneous.value.trim();
+    if (els.setExCookieSk) next.exCookieSk = els.setExCookieSk.value.trim();
+    draftSettings = next;
+  }
+
+  async function commitDraftSettings(options = {}) {
+    syncFormInputsIntoDraft();
+    const payload = cloneSettingsObj(getDraftSettings());
+    const resp = await sendMessage({ type: 'EH_SAVE_SETTINGS', settings: payload });
     if (resp && resp.ok && resp.settings) {
       settings = resp.settings;
+      draftSettings = cloneSettingsObj(settings);
+      hasUnsavedChanges = false;
       if (resp.fileDefaults) fileDefaults = resp.fileDefaults;
       if (resp.fileSource) fileSource = resp.fileSource;
+
+      if (options.applyCookiesNow && settings.exCookieMemberId && settings.exCookiePassHash) {
+        const cResp = await sendMessage({
+          type: 'EH_APPLY_MANUAL_COOKIES',
+          exCookieMemberId: settings.exCookieMemberId,
+          exCookiePassHash: settings.exCookiePassHash,
+          exCookieIgneous: settings.exCookieIgneous,
+          exCookieSk: settings.exCookieSk,
+          alsoApplyToEh: true
+        });
+        if (cResp && cResp.cookieStatus) {
+          latestCookieStatus = cResp.cookieStatus;
+          renderCookieStatusSummary(latestCookieStatus);
+        }
+      } else {
+        await refreshCookieStatusUI();
+      }
+
       renderSettingsControls();
+      const timeStr = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+      const msg = `✓ 设置已于 ${timeStr} 保存并生效！`;
+      renderSaveBarState(msg);
+      showSettingsNotice(msg);
+      return true;
     }
+    return false;
+  }
+
+  function discardDraftSettings() {
+    draftSettings = cloneSettingsObj(settings);
+    hasUnsavedChanges = false;
+    renderSettingsControls();
+    renderSaveBarState('已还原未保存的更改。');
+    showSettingsNotice('已还原未保存的更改。');
   }
 
   async function runUrlTester() {
@@ -2017,7 +2596,12 @@
       els.testerCopyOutput.textContent = '-';
       return;
     }
-    const resp = await sendMessage({ type: 'EH_CONVERT_URL', url: urlStr });
+    const d = getDraftSettings();
+    const resp = await sendMessage({
+      type: 'EH_CONVERT_URL',
+      url: urlStr,
+      previewSettings: d
+    });
     if (!resp || !resp.ok) return;
 
     if (resp.redirect && resp.redirect.targetUrl) {
@@ -2026,11 +2610,11 @@
       els.testerRedirectOutput.textContent = '不触发跳转（保留原链接）';
     }
 
-    if (settings.enableShortcutCopy && resp.converted) {
+    if (d.enableShortcutCopy && resp.converted) {
       els.testerCopyOutput.textContent = resp.converted.unchanged
         ? `${resp.converted.convertedUrl} (当前已是目标域名，保留不变)`
         : resp.converted.convertedUrl;
-    } else if (!settings.enableShortcutCopy) {
+    } else if (!d.enableShortcutCopy) {
       els.testerCopyOutput.textContent = '功能 4A 当前已关闭';
     } else {
       els.testerCopyOutput.textContent = '非支持的 EH/镜像站链接';
@@ -2112,29 +2696,60 @@
     });
     els.detectSiteBtn.addEventListener('click', detectOpenSite);
 
-    // Disabled banners inline enable
-    els.enableFavTransferInlineBtn.addEventListener('click', () =>
-      savePartialSettings({ enableFavTransfer: true })
-    );
-    els.enableTagStatsInlineBtn.addEventListener('click', () =>
-      savePartialSettings({ enableTagStats: true })
-    );
+    // Save & Discard buttons
+    if (els.saveAllSettingsBtn) {
+      els.saveAllSettingsBtn.addEventListener('click', () => {
+        commitDraftSettings({ applyCookiesNow: true });
+      });
+    }
+    if (els.topbarSaveSettingsBtn) {
+      els.topbarSaveSettingsBtn.addEventListener('click', () => {
+        commitDraftSettings({ applyCookiesNow: true });
+      });
+    }
+    if (els.discardSettingsBtn) {
+      els.discardSettingsBtn.addEventListener('click', () => {
+        discardDraftSettings();
+      });
+    }
 
-    // Persist Tab 1 & Tab 2 operational controls into settings
-    els.readDelayInput.addEventListener('change', () => {
-      savePartialSettings({ readDelayMs: Number(els.readDelayInput.value) });
+    window.addEventListener('beforeunload', (e) => {
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
     });
+
+    // Disabled banners inline enable (stages into draft, requires Save Settings click)
+    els.enableFavTransferInlineBtn.addEventListener('click', () => {
+      stageSettings({ enableFavTransfer: true });
+      appendImportLog('已勾选开启功能 1，请点击右上角「保存设置」按钮确认生效！', 'warn');
+    });
+    els.enableTagStatsInlineBtn.addEventListener('click', () => {
+      stageSettings({ enableTagStats: true });
+      els.tagResultNotice.textContent = '已勾选开启功能 2，请点击右上角「保存设置」按钮确认生效！';
+    });
+
+    // Stage Tab 1 & Tab 2 operational controls into draftSettings
+    els.readDelayInput.addEventListener('change', () => {
+      stageSettings({ readDelayMs: Number(els.readDelayInput.value) });
+    });
+    if (els.incrementalScanCheck) {
+      els.incrementalScanCheck.addEventListener('change', () => {
+        stageSettings({ incrementalFavScan: els.incrementalScanCheck.checked });
+      });
+    }
     els.importDelayInput.addEventListener('change', () => {
-      savePartialSettings({ importDelayMs: Number(els.importDelayInput.value) });
+      stageSettings({ importDelayMs: Number(els.importDelayInput.value) });
     });
     els.reverseOrderCheck.addEventListener('change', () => {
-      savePartialSettings({ importReverseOrder: els.reverseOrderCheck.checked });
+      stageSettings({ importReverseOrder: els.reverseOrderCheck.checked });
     });
     els.skipImportedCheck.addEventListener('change', () => {
-      savePartialSettings({ importSkipExisting: els.skipImportedCheck.checked });
+      stageSettings({ importSkipExisting: els.skipImportedCheck.checked });
     });
     els.tagDelayInput.addEventListener('change', () => {
-      savePartialSettings({ tagDelayMs: Number(els.tagDelayInput.value) });
+      stageSettings({ tagDelayMs: Number(els.tagDelayInput.value) });
     });
 
     // Tab 1 actions
@@ -2323,13 +2938,14 @@
       els.galleryModal.classList.add('hidden')
     );
 
-    // Tab 3 Settings
+    // Tab 3 Settings (stage into draft; saved only when clicking Save Settings)
     const togglePairs = [
       ['setEnableFavTransfer', 'enableFavTransfer'],
       ['setEnableTagStats', 'enableTagStats'],
       ['setEnableMirrorRedirect', 'enableMirrorRedirect'],
       ['setEnableShortcutCopy', 'enableShortcutCopy'],
       ['setEnableDomainSwapRedirect', 'enableDomainSwapRedirect'],
+      ['setIncrementalFavScan', 'incrementalFavScan'],
       ['setRedirectExternalOnly', 'redirectExternalOnly'],
       ['setEnableExCookieManager', 'enableExCookieManager'],
       ['setAutoSyncEhToExCookie', 'autoSyncEhToExCookie'],
@@ -2339,9 +2955,8 @@
     ];
     togglePairs.forEach(([elId, key]) => {
       if (!els[elId]) return;
-      els[elId].addEventListener('change', async () => {
-        await savePartialSettings({ [key]: els[elId].checked });
-        await refreshCookieStatusUI();
+      els[elId].addEventListener('change', () => {
+        stageSettings({ [key]: els[elId].checked });
       });
     });
 
@@ -2393,7 +3008,13 @@
         els.setExCookiePassHash.value = src.passHash || '';
         els.setExCookieIgneous.value = src.hasValidIgneous ? src.igneous : '';
         els.setExCookieSk.value = src.sk || '';
-        showCookieNotice('已将浏览器当前 Cookie 读取至表单，点击「保存并写入浏览器 Cookie」可持久保存。');
+        stageSettings({
+          exCookieMemberId: src.memberId || '',
+          exCookiePassHash: src.passHash || '',
+          exCookieIgneous: src.hasValidIgneous ? src.igneous : '',
+          exCookieSk: src.sk || ''
+        });
+        showCookieNotice('已读取当前 Cookie 到草稿，请点击「保存设置」或「保存并写入浏览器 Cookie」持久保存。');
       });
     }
 
@@ -2443,7 +3064,13 @@
       if (p.ipb_pass_hash) els.setExCookiePassHash.value = p.ipb_pass_hash;
       if (p.igneous) els.setExCookieIgneous.value = p.igneous;
       if (p.sk) els.setExCookieSk.value = p.sk;
-      showCookieNotice('已解析填入下方字段，请点击「保存并写入浏览器 Cookie」生效！');
+      stageSettings({
+        ...(p.ipb_member_id ? { exCookieMemberId: p.ipb_member_id } : {}),
+        ...(p.ipb_pass_hash ? { exCookiePassHash: p.ipb_pass_hash } : {}),
+        ...(p.igneous ? { exCookieIgneous: p.igneous } : {}),
+        ...(p.sk ? { exCookieSk: p.sk } : {})
+      });
+      showCookieNotice('已解析填入下方字段，请点击「保存设置」或「保存并写入浏览器 Cookie」生效！');
     };
 
     if (els.parseCookiePasteBtn) {
@@ -2469,53 +3096,50 @@
       });
     }
 
+    [
+      ['setExCookieMemberId', 'exCookieMemberId'],
+      ['setExCookiePassHash', 'exCookiePassHash'],
+      ['setExCookieIgneous', 'exCookieIgneous'],
+      ['setExCookieSk', 'exCookieSk']
+    ].forEach(([elId, key]) => {
+      if (!els[elId]) return;
+      els[elId].addEventListener('input', () => {
+        stageSettings({ [key]: els[elId].value.trim() });
+      });
+    });
+
     if (els.applyManualCookiesBtn) {
       els.applyManualCookiesBtn.addEventListener('click', async () => {
         const memberId = (els.setExCookieMemberId.value || '').trim();
         const passHash = (els.setExCookiePassHash.value || '').trim();
-        const igneous = (els.setExCookieIgneous.value || '').trim();
-        const sk = (els.setExCookieSk.value || '').trim();
 
         if (!memberId || !passHash) {
           showCookieNotice('请至少填写 ipb_member_id 和 ipb_pass_hash！');
           return;
         }
 
-        const resp = await sendMessage({
-          type: 'EH_APPLY_MANUAL_COOKIES',
-          exCookieMemberId: memberId,
-          exCookiePassHash: passHash,
-          exCookieIgneous: igneous,
-          exCookieSk: sk,
-          alsoApplyToEh: true
-        });
-
-        if (resp && resp.ok) {
-          if (resp.settings) settings = resp.settings;
-          if (resp.cookieStatus) {
-            latestCookieStatus = resp.cookieStatus;
-            renderCookieStatusSummary(latestCookieStatus);
-          }
-          renderSettingsControls();
+        const ok = await commitDraftSettings({ applyCookiesNow: true });
+        if (ok) {
           els.cookiePasteInput.value = '';
-          showCookieNotice('已保存并将 Cookie 写入 exhentai.org 与 e-hentai.org！');
+          showCookieNotice('已保存全部设置并将 Cookie 写入 exhentai.org 与 e-hentai.org！');
         }
       });
     }
 
     if (els.clearManualCookiesBtn) {
-      els.clearManualCookiesBtn.addEventListener('click', async () => {
-        const resp = await sendMessage({ type: 'EH_CLEAR_MANUAL_COOKIES' });
-        if (resp && resp.ok) {
-          if (resp.settings) settings = resp.settings;
-          if (resp.cookieStatus) {
-            latestCookieStatus = resp.cookieStatus;
-            renderCookieStatusSummary(latestCookieStatus);
-          }
-          els.cookiePasteInput.value = '';
-          renderSettingsControls();
-          showCookieNotice('已清空手动保存的 Cookie 配置（浏览器当前已登录状态仍保留）。');
-        }
+      els.clearManualCookiesBtn.addEventListener('click', () => {
+        els.setExCookieMemberId.value = '';
+        els.setExCookiePassHash.value = '';
+        els.setExCookieIgneous.value = '';
+        els.setExCookieSk.value = '';
+        els.cookiePasteInput.value = '';
+        stageSettings({
+          exCookieMemberId: '',
+          exCookiePassHash: '',
+          exCookieIgneous: '',
+          exCookieSk: ''
+        });
+        showCookieNotice('已清空表单中的 Cookie 字段，请点击上方「保存设置」确认保存。');
       });
     }
 
@@ -2528,7 +3152,7 @@
     ];
     selectPairs.forEach(([elId, key]) => {
       els[elId].addEventListener('change', () => {
-        savePartialSettings({ [key]: els[elId].value });
+        stageSettings({ [key]: els[elId].value });
       });
     });
 
@@ -2536,12 +3160,14 @@
     els.setMirrorDomain.addEventListener('input', () => {
       clearTimeout(mirrorDebounce);
       mirrorDebounce = setTimeout(() => {
-        savePartialSettings({ mirrorDomain: els.setMirrorDomain.value });
-      }, 350);
+        stageSettings({ mirrorDomain: els.setMirrorDomain.value });
+      }, 200);
     });
     els.setMirrorDomain.addEventListener('blur', () => {
       clearTimeout(mirrorDebounce);
-      savePartialSettings({ mirrorDomain: els.setMirrorDomain.value });
+      if (els.setMirrorDomain.value !== (getDraftSettings().mirrorDomain || '')) {
+        stageSettings({ mirrorDomain: els.setMirrorDomain.value });
+      }
     });
 
     let isRecording = false;
@@ -2588,7 +3214,7 @@
       isRecording = false;
       els.setShortcutInput.classList.remove('recording');
       els.setShortcutInput.blur();
-      savePartialSettings({ customShortcut: shortcut });
+      stageSettings({ customShortcut: shortcut });
     });
 
     els.setResetShortcutBtn.addEventListener('click', () => {
@@ -2601,7 +3227,7 @@
         key: 'c',
         label: 'Alt + C'
       };
-      savePartialSettings({ customShortcut: { ...defaultShortcut } });
+      stageSettings({ customShortcut: { ...defaultShortcut } });
     });
 
     els.setOpenBrowserShortcutsBtn.addEventListener('click', () => {
@@ -2613,6 +3239,8 @@
       const resp = await sendMessage({ type: 'EH_RELOAD_FILE_SETTINGS' });
       if (resp && resp.ok && resp.settings) {
         settings = resp.settings;
+        draftSettings = cloneSettingsObj(settings);
+        hasUnsavedChanges = false;
         fileDefaults = resp.fileDefaults || null;
         fileSource = resp.fileSource || 'settings.json';
         els.testerUrlInput.value = buildPresetUrl('exhentai');
@@ -2625,7 +3253,11 @@
       const resp = await sendMessage({ type: 'EH_EXPORT_SETTINGS_JSON' });
       if (resp && resp.ok && resp.jsonText) {
         downloadFile('settings.json', resp.jsonText, 'application/json');
-        showSettingsNotice('已导出 settings.json，可直接放入插件根目录覆盖原文件。');
+        showSettingsNotice(
+          hasUnsavedChanges
+            ? '已导出上次已保存的 settings.json（当前界面仍有未保存修改，如需导出最新修改请先点击「保存设置」）。'
+            : '已导出 settings.json，可直接放入插件根目录覆盖原文件。'
+        );
       }
     });
 
@@ -2638,8 +3270,10 @@
         if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           throw new Error('JSON 根节点必须是对象');
         }
-        await savePartialSettings(parsed);
-        showSettingsNotice(`已成功导入并应用配置文件：${file.name}`);
+        stageSettings(
+          parsed,
+          `已从 ${file.name} 读取配置至界面，请检查后点击「保存设置」生效！`
+        );
       } catch (err) {
         showSettingsNotice(`导入配置失败：${err.message}`);
       } finally {
@@ -2647,14 +3281,14 @@
       }
     });
 
-    els.setHighlightTags.addEventListener('change', () => {
-      savePartialSettings({ highlightTags: els.setHighlightTags.value });
+    els.setHighlightTags.addEventListener('input', () => {
+      stageSettings({ highlightTags: els.setHighlightTags.value });
     });
-    els.setHighlightTagLabel.addEventListener('change', () => {
-      savePartialSettings({ highlightTagLabel: els.setHighlightTagLabel.value });
+    els.setHighlightTagLabel.addEventListener('input', () => {
+      stageSettings({ highlightTagLabel: els.setHighlightTagLabel.value });
     });
     els.setSampleGalleryPath.addEventListener('change', () => {
-      savePartialSettings({ sampleGalleryPath: els.setSampleGalleryPath.value });
+      stageSettings({ sampleGalleryPath: els.setSampleGalleryPath.value });
       els.testerUrlInput.value = buildPresetUrl('exhentai');
       runUrlTester();
     });
@@ -2668,8 +3302,8 @@
       ['setToastDurationMs', 'toastDurationMs']
     ];
     numericAdvancedPairs.forEach(([elId, key]) => {
-      els[elId].addEventListener('change', () => {
-        savePartialSettings({ [key]: Number(els[elId].value) });
+      els[elId].addEventListener('input', () => {
+        stageSettings({ [key]: Number(els[elId].value) });
       });
     });
 
@@ -2685,6 +3319,9 @@
       if (area !== 'local') return;
       if (changes.eh_settings && changes.eh_settings.newValue) {
         settings = changes.eh_settings.newValue;
+        if (!hasUnsavedChanges) {
+          draftSettings = cloneSettingsObj(settings);
+        }
         renderSettingsControls();
       }
     });
@@ -2693,6 +3330,8 @@
   async function init() {
     const resp = await sendMessage({ type: 'EH_GET_SETTINGS' });
     settings = resp && resp.settings ? resp.settings : {};
+    draftSettings = cloneSettingsObj(settings);
+    hasUnsavedChanges = false;
     fileDefaults = resp && resp.fileDefaults ? resp.fileDefaults : null;
     fileSource = (resp && resp.fileSource) || 'settings.json';
 

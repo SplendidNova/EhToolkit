@@ -6,11 +6,12 @@
 
 1. **10 个收藏夹跨账号迁移（功能 1）**
    - 读取当前账号 `favcat=0` ~ `favcat=9` 共 10 个收藏夹的所有画廊及 `favnote` 备注（支持游标分页 `#unext` 与传统分页，兼容 Minimal / Compact / Extended / Thumbnail 全部视图）。
+   - **防封禁增量对比读取（默认开启）**：自动识别空收藏夹（0 请求跳过），并与上次读取快照按页比对——未变动或仅顶部新增画廊时自动跳过后续重复翻页，仅在存在删除时扫描对应分类。
    - 支持本地持久化缓存与导出/导入 `.json` 备份文件。
    - 切换登录新账号后，按对应的 `0~9` 收藏夹序号一键导入，默认采用倒序导入以保持原排序，并支持断点续传、暂停/继续与失败重试。
 
 2. **收藏夹标签提取与去重统计（功能 2）**
-   - 自动去重收集收藏夹内画廊，默认按每批 25 个调用 E-Hentai `api.php` (`gdata`, `namespace: 1`) 获取元数据；当镜像站未代理 `api.php` 时自动回退到官方 `https://api.e-hentai.org/api.php`。
+   - 自动去重收集收藏夹内画廊，默认按每批 25 个调用 E-Hentai / ExHentai `api.php` (`gdata`, `namespace: 1`) 获取元数据；**自动对比上次读取快照**：若收藏夹完全一致则不再请求标签 API，若有增删则仅移除已删项并仅请求新增画廊的标签。
    - 不重复列出所有 `artist`、`group`、`parody` 列表，并统计各自对应的画廊数量，支持搜索、排序与点击查看关联画廊。
    - 支持单独统计自定义重点标签（可在 `settings.json` 的 `tagStats.highlightTags` 中自由配置）的画廊数量、占比与命中明细，支持一键复制文本汇总或导出 JSON / CSV。
 
@@ -38,7 +39,7 @@
   ```
 - **热重载与导出**：
   - 直接编辑本地 `settings.json` 后，可在插件「控制台 → 3. 跳转与全局参数设置」点击 **「从 settings.json 重新加载」** 立即生效；
-  - 在弹窗或控制台界面修改任意参数后，也可点击 **「导出当前配置为 settings.json」** 下载覆盖本地配置文件。
+  - 在控制台修改任意参数后，点击 **「保存设置」** 使其正式生效，也可点击 **「导出当前配置为 settings.json」** 下载覆盖本地配置文件。
 
 ### `settings.json` 参数分组概览
 
@@ -47,7 +48,7 @@
 | `features` | `enableFavTransfer`, `enableTagStats`, `enableMirrorRedirect`, `enableShortcutCopy`, `enableDomainSwapRedirect` | 五大核心子功能的独立默认开关 |
 | `redirect` | `mirrorDomain`, `mirrorSourceScope`, `domainSwapRedirectMode`, `redirectPriority`, `redirectExternalOnly`, `redirectDedupWindowMs` | 镜像站域名、表里站转换策略、优先级与重定向防重窗口 |
 | `shortcutCopy` | `copyTargetDomain`, `mirrorCopyTarget`, `customShortcut`, `copyDedupWindowMs`, `toastDurationMs`, `toastErrorDurationMs`, `badgeClearDelayMs` | 页面快捷键组合、复制目标域名、提示横幅与扩展角标停留时长 |
-| `favorites` | `defaultActiveSite`, `readDelayMs`, `readDelayMinMs`, `importDelayMs`, `importDelayMinMs`, `importReverseOrder`, `importSkipExisting`, `importSaveEveryN`, `favPreviewLimit` | 默认操作站点、收藏夹读取/导入请求间隔、倒序与断点续传策略、预览条数上限 |
+| `favorites` | `defaultActiveSite`, `incrementalFavScan`, `readDelayMs`, `readDelayMinMs`, `importDelayMs`, `importDelayMinMs`, `importReverseOrder`, `importSkipExisting`, `importSaveEveryN`, `favPreviewLimit` | 默认操作站点、防封禁增量对比开关、收藏夹读取/导入请求间隔、倒序与断点续传策略、预览条数上限 |
 | `tagStats` | `officialApiUrl`, `apiBatchSize`, `tagDelayMs`, `tagDelayMinMs`, `tagCooldownEveryBatches`, `tagCooldownExtraMs`, `highlightTags`, `highlightTagLabel` | 官方 API 地址、每批查询数量、防风控批次冷却参数、自定义重点统计标签及显示名称 |
 | `cookies` | `enableExCookieManager`, `autoSyncEhToExCookie`, `syncCookieToMirror`, `preferExhentaiApi`, `autoRedirectUnavailableToEx`, `exCookieMemberId`, `exCookiePassHash`, `exCookieIgneous`, `exCookieSk` | ExHentai 里站 Cookie 自动同步、手动通行证配置、镜像站透传、里站 API 优先策略与表站不可见自动跳转 |
 | `tester` | `sampleGalleryPath` | 控制台实时 URL 测试器的示例画廊路径 |
