@@ -5,7 +5,7 @@
     "enableTagStats": true,
     "enableMirrorRedirect": false,
     "enableShortcutCopy": true,
-    "enableDomainSwapRedirect": false
+    "enableDomainSwapRedirect": true
   },
   "redirect": {
     "mirrorDomain": "",
