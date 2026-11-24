@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EH Toolkit</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div>
+        <h1 class="title">EH Toolkit</h1>
+        <p class="subtitle">收藏迁移 · 标签统计 · 域名转换</p>
+      </div>
+      <button id="openDashboardBtn" class="btn btn-primary btn-sm">打开控制台</button>
+    </header>
+
+    <section class="card quick-copy-card">
+      <div class="card-head">
+        <span class="badge" id="currentSiteBadge">检测中...</span>
+        <span class="hint-text" id="copyStatusText"></span>
+      </div>
+      <div class="url-preview" id="urlPreviewBox">
+        <div class="url-row">
+          <span class="url-label">当前</span>
+          <code class="url-code" id="currentUrlText">-</code>
+        </div>
+        <div class="url-row">
+          <span class="url-label">转换</span>
+          <code class="url-code url-code-target" id="convertedUrlText">-</code>
+        </div>
+      </div>
+      <button id="quickCopyBtn" class="btn btn-accent btn-full" disabled>立即复制转换后链接</button>
+    </section>
+
+    <section class="card">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-title">功能 1：账号收藏夹迁移 (10个分类)</div>
+          <div class="toggle-desc">读取旧账号 0~9 收藏夹并导入新账号</div>
+        </div>
+        <div class="toggle-actions">
+          <button class="link-btn" data-open-tab="transfer">打开</button>
+          <label class="switch">
+            <input type="checkbox" id="enableFavTransfer">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-title">功能 2：收藏夹标签提取与统计</div>
+          <div class="toggle-desc" id="tagStatsPopupDesc">去重列出 artist/group/parody 与重点标签统计</div>
+        </div>
+        <div class="toggle-actions">
+          <button class="link-btn" data-open-tab="tags">打开</button>
+          <label class="switch">
+            <input type="checkbox" id="enableTagStats">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-title">功能 3：打开链接自动转镜像站</div>
+          <div class="toggle-desc">外部点开 ex/eh 链接时自动转入镜像域名</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="enableMirrorRedirect">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="sub-fields">
+        <label class="field">
+          <span>镜像站域名</span>
+          <input type="text" id="mirrorDomain" placeholder="例如 mirror.example.com">
+        </label>
+        <label class="field">
+          <span>转换源域名</span>
+          <select id="mirrorSourceScope">
+            <option value="both">exhentai.org + e-hentai.org</option>
+            <option value="exhentai">仅 exhentai.org</option>
+            <option value="e-hentai">仅 e-hentai.org</option>
+          </select>
+        </label>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-title">功能 4A：快捷键复制转换画廊域名</div>
+          <div class="toggle-desc">按快捷键复制并输出指定目标域名链接</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="enableShortcutCopy">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="sub-fields">
+        <label class="field">
+          <span>复制输出目标域名</span>
+          <select id="copyTargetDomain">
+            <option value="exhentai.org">总是转为 exhentai.org (复制 exhentai 不变)</option>
+            <option value="e-hentai.org">总是转为 e-hentai.org (复制 e-hentai 不变)</option>
+            <option value="swap">双向互转 (e-hentai ↔ exhentai)</option>
+          </select>
+        </label>
+        <div class="field">
+          <span>页面自定义快捷键</span>
+          <div class="shortcut-row">
+            <input type="text" id="shortcutInput" readonly placeholder="点击后按组合键">
+            <button id="resetShortcutBtn" class="btn btn-ghost btn-xs">重置</button>
+          </div>
+        </div>
+        <label class="field" id="mirrorCopyTargetRow">
+          <span>在镜像站复制时转为</span>
+          <select id="mirrorCopyTarget">
+            <option value="exhentai.org">exhentai.org</option>
+            <option value="e-hentai.org">e-hentai.org</option>
+          </select>
+        </label>
+        <button id="openBrowserShortcutsBtn" class="btn btn-ghost btn-xs btn-full">
+          设置浏览器地址栏全局快捷键 (chrome://extensions/shortcuts)
+        </button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="toggle-row">
+        <div class="toggle-info">
+          <div class="toggle-title">功能 4B：打开链接表里站域名转换</div>
+          <div class="toggle-desc">打开链接时自动转为指定表/里站域名</div>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="enableDomainSwapRedirect">
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="sub-fields">
+        <label class="field">
+          <span>跳转模式</span>
+          <select id="domainSwapRedirectMode">
+            <option value="e2ex">总是使用 exhentai.org (打开 e-hentai 自动转 exhentai)</option>
+            <option value="ex2e">总是使用 e-hentai.org (打开 exhentai 自动转 e-hentai)</option>
+            <option value="swap">双向互转 (e-hentai ↔ exhentai)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>功能 3 与 4B 同开时优先</span>
+          <select id="redirectPriority">
+            <option value="mirror">优先转镜像站 (功能3)</option>
+            <option value="swap">优先表里站转换 (功能4B)</option>
+          </select>
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="redirectExternalOnly">
+          <span>双向互转时仅外部/新入口触发（防止站内点击反复翻转）</span>
+        </label>
+      </div>
+    </section>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

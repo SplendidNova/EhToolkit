@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EH Toolkit 控制台 - 收藏迁移 / 标签统计 / 域名设置</title>
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <div class="layout">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-logo">EH</div>
+        <div>
+          <h1>EH Toolkit 控制台</h1>
+          <p class="muted">10 收藏夹迁移 · 标签去重统计 · 外链自动跳转与快捷键转换</p>
+        </div>
+      </div>
+
+      <div class="site-picker">
+        <label class="inline-label">
+          <span>当前操作站点：</span>
+          <select id="siteSelect">
+            <option value="https://exhentai.org">https://exhentai.org (里站)</option>
+            <option value="https://e-hentai.org">https://e-hentai.org (表站)</option>
+            <option value="mirror">镜像站</option>
+            <option value="custom">自定义域名</option>
+          </select>
+        </label>
+        <input type="text" id="customOriginInput" class="hidden" placeholder="https://example.org">
+        <button id="detectSiteBtn" class="btn btn-ghost">自动检测标签页</button>
+      </div>
+    </header>
+
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="transfer">1. 收藏夹跨账号迁移</button>
+      <button class="tab-btn" data-tab="tags">2. 收藏夹标签统计</button>
+      <button class="tab-btn" data-tab="settings">3. 跳转与全局参数设置</button>
+    </nav>
+
+    <!-- Tab 1: Favorites Transfer -->
+    <section id="tab-transfer" class="tab-panel active">
+      <div id="transferDisabledBanner" class="banner warning hidden">
+        <span>「功能 1：账号收藏夹迁移」当前处于关闭状态。</span>
+        <button id="enableFavTransferInlineBtn" class="btn btn-primary btn-sm">立即开启</button>
+      </div>
+
+      <div class="panel-grid">
+        <!-- Step 1 -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2>第一步：读取原账号 10 个收藏夹 (favcat 0 ~ 9)</h2>
+              <p class="muted">读取后数据会持久保存在本地，切换登录新账号也不会丢失。</p>
+            </div>
+            <div class="btn-group">
+              <button id="readAllFavsBtn" class="btn btn-primary">读取全部 10 个收藏夹</button>
+              <button id="stopReadFavsBtn" class="btn btn-danger hidden">停止读取</button>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <label class="inline-field">
+              <span>翻页间隔 (ms)</span>
+              <input type="number" id="readDelayInput" value="350" min="100" max="60000" step="50">
+            </label>
+            <div class="btn-group">
+              <button id="exportFavBackupBtn" class="btn btn-ghost" disabled>导出 JSON 备份</button>
+              <label class="btn btn-ghost file-btn">
+                导入 JSON 备份
+                <input type="file" id="importFavBackupInput" accept=".json">
+              </label>
+              <button id="clearFavCacheBtn" class="btn btn-ghost">清空读取缓存</button>
+            </div>
+          </div>
+
+          <div id="readProgressBox" class="progress-box hidden">
+            <div class="progress-text">
+              <span id="readStatusText">准备中...</span>
+              <span id="readPercentText">0%</span>
+            </div>
+            <div class="progress-bar"><div id="readProgressFill" class="progress-fill"></div></div>
+          </div>
+
+          <div class="cat-toolbar">
+            <span id="favSummaryText" class="muted">尚未读取收藏夹数据</span>
+            <div class="btn-group">
+              <button id="selectAllCatsBtn" class="btn btn-ghost btn-xs">全选</button>
+              <button id="deselectAllCatsBtn" class="btn btn-ghost btn-xs">全不选</button>
+            </div>
+          </div>
+
+          <div id="favCategoryGrid" class="cat-grid"></div>
+
+          <div id="favPreviewSection" class="preview-box hidden">
+            <div class="preview-header">
+              <h3 id="favPreviewTitle">分类预览</h3>
+              <input type="text" id="favPreviewSearch" placeholder="按标题或 GID 过滤...">
+            </div>
+            <div class="table-wrap small-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 60px">#</th>
+                    <th>画廊标题</th>
+                    <th style="width: 170px">GID / Token</th>
+                    <th style="width: 220px">备注 (favnote)</th>
+                  </tr>
+                </thead>
+                <tbody id="favPreviewTbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Step 2 -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <h2>第二步：导入到新账号对应的 10 个收藏夹</h2>
+              <p class="muted">请先在「当前操作站点」登录新账号，再点击开始导入（原 favcat 0~9 会一一对应写入新账号 0~9）。</p>
+            </div>
+            <div class="btn-group">
+              <button id="startImportBtn" class="btn btn-accent" disabled>开始导入到当前账号</button>
+              <button id="pauseImportBtn" class="btn btn-ghost hidden">暂停</button>
+              <button id="resumeImportBtn" class="btn btn-primary hidden">继续</button>
+              <button id="stopImportBtn" class="btn btn-danger hidden">终止</button>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <div class="checkbox-group">
+              <label class="checkbox-label">
+                <input type="checkbox" id="reverseOrderCheck" checked>
+                <span>倒序导入（保持新账号收藏夹排序与原账号一致）</span>
+              </label>
+              <label class="checkbox-label">
+                <input type="checkbox" id="skipImportedCheck" checked>
+                <span>跳过历史已成功导入的画廊（断点续传）</span>
+              </label>
+            </div>
+            <div class="btn-group">
+              <label class="inline-field">
+                <span>导入间隔 (ms)</span>
+                <input type="number" id="importDelayInput" value="400" min="150" max="60000" step="50">
+              </label>
+              <button id="retryFailedImportBtn" class="btn btn-ghost hidden">重试失败项</button>
+              <button id="clearImportHistoryBtn" class="btn btn-ghost">清空已导入记录</button>
+            </div>
+          </div>
+
+          <div class="stats-strip">
+            <div class="mini-stat"><span>待导入选中</span><strong id="impTotalCount">0</strong></div>
+            <div class="mini-stat"><span>成功</span><strong id="impSuccessCount" class="text-green">0</strong></div>
+            <div class="mini-stat"><span>跳过(已导)</span><strong id="impSkippedCount" class="text-blue">0</strong></div>
+            <div class="mini-stat"><span>失败</span><strong id="impFailedCount" class="text-red">0</strong></div>
+          </div>
+
+          <div id="importProgressBox" class="progress-box hidden">
+            <div class="progress-text">
+              <span id="importStatusText">准备就绪</span>
+              <span id="importPercentText">0%</span>
+            </div>
+            <div class="progress-bar"><div id="importProgressFill" class="progress-fill accent"></div></div>
+          </div>
+
+          <div id="importLogBox" class="log-box"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 2: Tag Stats -->
+    <section id="tab-tags" class="tab-panel">
+      <div id="tagsDisabledBanner" class="banner warning hidden">
+        <span>「功能 2：收藏夹标签提取与统计」当前处于关闭状态。</span>
+        <button id="enableTagStatsInlineBtn" class="btn btn-primary btn-sm">立即开启</button>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div>
+            <h2 id="tagStatsHeading">收藏夹画廊标签提取 (artist / group / parody / female:stocking(s))</h2>
+            <p class="muted" id="tagStatsSubheading">自动按每批 25 个画廊调用 API (namespace=1)，支持本地缓存与镜像站点自动回退官方 API。</p>
+          </div>
+          <div class="btn-group">
+            <button id="scanAndFetchTagsBtn" class="btn btn-primary">扫描收藏夹并统计标签</button>
+            <button id="fetchTagsFromCacheBtn" class="btn btn-accent">直接统计已读取的收藏夹</button>
+            <button id="pauseTagFetchBtn" class="btn btn-ghost hidden">暂停</button>
+            <button id="resumeTagFetchBtn" class="btn btn-primary hidden">继续</button>
+            <button id="stopTagFetchBtn" class="btn btn-danger hidden">停止</button>
+          </div>
+        </div>
+
+        <div class="toolbar">
+          <div class="inline-controls">
+            <label class="inline-field">
+              <span>API 批次间隔 (ms)</span>
+              <input type="number" id="tagDelayInput" value="600" min="200" max="60000" step="100">
+            </label>
+            <span id="tagCacheStatus" class="muted">标签缓存：0 条</span>
+          </div>
+          <div class="btn-group">
+            <button id="clearTagCacheBtn" class="btn btn-ghost">清除标签缓存</button>
+          </div>
+        </div>
+
+        <div id="tagProgressBox" class="progress-box hidden">
+          <div class="progress-text">
+            <span id="tagStatusText">准备中...</span>
+            <span id="tagPercentText">0%</span>
+          </div>
+          <div class="progress-bar"><div id="tagProgressFill" class="progress-fill"></div></div>
+        </div>
+      </div>
+
+      <!-- Summary Cards -->
+      <div class="summary-cards">
+        <div class="metric-card">
+          <div class="metric-label">去重后收藏画廊总数</div>
+          <div class="metric-value" id="statTotalGalleries">0</div>
+          <div class="metric-sub" id="statFetchedSub">已解析标签 0 个</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">不重复 Artist 数量</div>
+          <div class="metric-value" id="statArtistUnique">0</div>
+          <div class="metric-sub" id="statArtistCovered">覆盖 0 个画廊</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">不重复 Group 数量</div>
+          <div class="metric-value" id="statGroupUnique">0</div>
+          <div class="metric-sub" id="statGroupCovered">覆盖 0 个画廊</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-label">不重复 Parody 数量</div>
+          <div class="metric-value" id="statParodyUnique">0</div>
+          <div class="metric-sub" id="statParodyCovered">覆盖 0 个画廊</div>
+        </div>
+        <div class="metric-card highlight-card">
+          <div class="metric-label">含 <span id="statHighlightTagName">female:stocking(s)</span> 画廊数</div>
+          <div class="metric-value text-green" id="statStockingCount">0</div>
+          <div class="metric-sub" id="statStockingSub">占比 0%</div>
+        </div>
+      </div>
+
+      <!-- Results Output Card -->
+      <div class="card">
+        <div class="results-toolbar">
+          <div class="subtabs">
+            <button class="subtab-btn active" data-subtab="artist">Artist 列表 (<span id="countBadgeArtist">0</span>)</button>
+            <button class="subtab-btn" data-subtab="group">Group 列表 (<span id="countBadgeGroup">0</span>)</button>
+            <button class="subtab-btn" data-subtab="parody">Parody 列表 (<span id="countBadgeParody">0</span>)</button>
+            <button class="subtab-btn" data-subtab="stocking"><span id="subtabHighlightTagName">female:stocking(s)</span> 画廊 (<span id="countBadgeStocking">0</span>)</button>
+          </div>
+          <div class="result-actions">
+            <input type="text" id="tagSearchInput" placeholder="搜索标签名或画廊标题...">
+            <select id="tagSortSelect">
+              <option value="count_desc">按画廊数量降序</option>
+              <option value="name_asc">按名称 A → Z</option>
+            </select>
+            <button id="copyStatsSummaryBtn" class="btn btn-primary btn-sm">复制统计结果</button>
+            <button id="exportStatsJsonBtn" class="btn btn-ghost btn-sm">导出 JSON</button>
+            <button id="exportStatsCsvBtn" class="btn btn-ghost btn-sm">导出 CSV</button>
+          </div>
+        </div>
+
+        <div id="tagResultNotice" class="muted" style="margin-bottom: 10px;"></div>
+
+        <div class="table-wrap">
+          <table>
+            <thead id="tagResultThead"></thead>
+            <tbody id="tagResultTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- Tab 3: Settings & Tester -->
+    <section id="tab-settings" class="tab-panel">
+      <div class="settings-grid">
+        <div class="card">
+          <h2>功能开关总控</h2>
+          <div class="settings-list">
+            <div class="setting-item">
+              <div>
+                <strong>功能 1：账号收藏夹读取与跨账号迁移</strong>
+                <p class="muted">开启/关闭 10 个收藏夹导入导出工作流</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setEnableFavTransfer">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>功能 2：收藏夹标签提取与统计</strong>
+                <p class="muted" id="setTagStatsDesc">统计不重复 artist / group / parody 与自定义重点标签</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setEnableTagStats">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>功能 3：打开链接自动转镜像站</strong>
+                <p class="muted">其他软件点开 exhentai/e-hentai 链接时自动转入镜像域名</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setEnableMirrorRedirect">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>功能 4A：快捷键复制转换画廊域名</strong>
+                <p class="muted">按快捷键复制画廊链接并转为指定目标域名（已在该域名则保持不变）</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setEnableShortcutCopy">
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div class="setting-item">
+              <div>
+                <strong>功能 4B：打开链接表里站域名转换</strong>
+                <p class="muted">点开 e-hentai / exhentai 链接时自动转为指定目标域名（已在该域名则不处理）</p>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="setEnableDomainSwapRedirect">
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>域名跳转与快捷键参数</h2>
+          <div class="form-stack">
+            <label class="field">
+              <span>镜像站域名 (功能 3)</span>
+              <input type="text" id="setMirrorDomain" placeholder="例如 mirror.example.com">
+            </label>
+            <label class="field">
+              <span>转入镜像站的源域名范围</span>
+              <select id="setMirrorSourceScope">
+                <option value="both">exhentai.org + e-hentai.org</option>
+                <option value="exhentai">仅 exhentai.org</option>
+                <option value="e-hentai">仅 e-hentai.org</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>打开链接目标域名模式 (功能 4B)</span>
+              <select id="setDomainSwapRedirectMode">
+                <option value="e2ex">总是使用 exhentai.org (打开 e-hentai 自动转 exhentai，打开 exhentai 不处理)</option>
+                <option value="ex2e">总是使用 e-hentai.org (打开 exhentai 自动转 e-hentai，打开 e-hentai 不处理)</option>
+                <option value="swap">双向互转 (e-hentai ↔ exhentai)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>功能 3 与 4B 同开时优先级</span>
+              <select id="setRedirectPriority">
+                <option value="mirror">优先转镜像站 (功能 3)</option>
+                <option value="swap">优先表里站转换 (功能 4B)</option>
+              </select>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" id="setRedirectExternalOnly">
+              <span>双向互转时仅外部软件/新标签页入口触发（防止站内点击无限来回跳转）</span>
+            </label>
+
+            <div class="divider"></div>
+
+            <label class="field">
+              <span>快捷键复制输出目标域名 (功能 4A)</span>
+              <select id="setCopyTargetDomain">
+                <option value="exhentai.org">总是转为 exhentai.org (在 exhentai 复制不变)</option>
+                <option value="e-hentai.org">总是转为 e-hentai.org (在 e-hentai 复制不变)</option>
+                <option value="swap">双向互转 (e-hentai ↔ exhentai)</option>
+              </select>
+            </label>
+            <div class="field">
+              <span>页面自定义快捷键 (功能 4A)</span>
+              <div class="shortcut-row">
+                <input type="text" id="setShortcutInput" readonly placeholder="点击后按组合键录制">
+                <button id="setResetShortcutBtn" class="btn btn-ghost">恢复默认快捷键</button>
+              </div>
+            </div>
+            <label class="field" id="setMirrorCopyTargetRow">
+              <span>在镜像站按下快捷键时转换的目标域名</span>
+              <select id="setMirrorCopyTarget">
+                <option value="exhentai.org">exhentai.org</option>
+                <option value="e-hentai.org">e-hentai.org</option>
+              </select>
+            </label>
+            <button id="setOpenBrowserShortcutsBtn" class="btn btn-ghost">
+              配置浏览器地址栏全局快捷键 (chrome://extensions/shortcuts)
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 16px;">
+        <div class="card-header">
+          <div>
+            <h2>配置文件 (settings.json) 与高级自定义参数</h2>
+            <p class="muted" id="fileSettingsSourceText">所有默认参数均已分离至扩展目录下的 settings.json，支持一键重新加载或导出覆盖。</p>
+          </div>
+          <div class="btn-group">
+            <button id="reloadFileSettingsBtn" class="btn btn-primary btn-sm">从 settings.json 重新加载</button>
+            <button id="exportSettingsJsonBtn" class="btn btn-accent btn-sm">导出当前配置为 settings.json</button>
+            <label class="btn btn-ghost btn-sm file-btn">
+              导入配置文件 (.json)
+              <input type="file" id="importSettingsJsonInput" accept=".json">
+            </label>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div class="form-stack">
+            <label class="field">
+              <span>重点统计标签列表（逗号分隔，不区分大小写）</span>
+              <input type="text" id="setHighlightTags" placeholder="female:stocking, female:stockings">
+            </label>
+            <label class="field">
+              <span>重点统计标签显示名称</span>
+              <input type="text" id="setHighlightTagLabel" placeholder="female:stocking(s)">
+            </label>
+            <label class="field">
+              <span>测试器示例画廊路径</span>
+              <input type="text" id="setSampleGalleryPath" placeholder="/g/1000000/0123456789/">
+            </label>
+          </div>
+          <div class="form-stack">
+            <label class="field">
+              <span>API 每批查询数量 (1~25) / 触发冷却批数 / 冷却时长 (ms)</span>
+              <div class="shortcut-row">
+                <input type="number" id="setApiBatchSize" min="1" max="25" step="1" title="API 每批数量">
+                <input type="number" id="setTagCooldownEveryBatches" min="0" max="100" step="1" title="每几批冷却一次">
+                <input type="number" id="setTagCooldownExtraMs" min="0" max="60000" step="500" title="额外冷却毫秒">
+              </div>
+            </label>
+            <label class="field">
+              <span>重定向防重窗口 (ms) / 复制防重窗口 (ms) / 提示条停留 (ms)</span>
+              <div class="shortcut-row">
+                <input type="number" id="setRedirectDedupWindowMs" min="500" max="60000" step="500" title="重定向防重窗口(ms)">
+                <input type="number" id="setCopyDedupWindowMs" min="50" max="5000" step="50" title="复制防重窗口(ms)">
+                <input type="number" id="setToastDurationMs" min="500" max="30000" step="200" title="提示条停留(ms)">
+              </div>
+            </label>
+            <span id="settingsActionNotice" class="muted">修改上方任意参数将自动保存；若直接编辑了本地 settings.json 文件，点击右上角「从 settings.json 重新加载」即可立即生效。</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 16px;">
+        <div class="card-header">
+          <div>
+            <h2>URL 转换与跳转实时测试器</h2>
+            <p class="muted">输入任意画廊链接，验证当前开关配置下的跳转目标与快捷键复制输出。</p>
+          </div>
+          <div class="btn-group">
+            <button class="btn btn-ghost btn-sm preset-test-btn" data-preset="exhentai">示例: exhentai</button>
+            <button class="btn btn-ghost btn-sm preset-test-btn" data-preset="e-hentai">示例: e-hentai</button>
+            <button class="btn btn-ghost btn-sm preset-test-btn" data-preset="mirror">示例: 镜像站</button>
+          </div>
+        </div>
+        <div class="tester-box">
+          <input type="text" id="testerUrlInput" value="">
+          <div class="tester-results">
+            <div class="tester-row">
+              <span>外部打开自动跳转结果：</span>
+              <code id="testerRedirectOutput">-</code>
+            </div>
+            <div class="tester-row">
+              <span>快捷键复制输出链接：</span>
+              <code id="testerCopyOutput">-</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal for viewing galleries of a tag -->
+  <div id="galleryModal" class="modal hidden">
+    <div class="modal-backdrop" id="galleryModalBackdrop"></div>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="galleryModalTitle">关联画廊列表</h3>
+        <button id="closeGalleryModalBtn" class="btn btn-ghost btn-xs">关闭</button>
+      </div>
+      <div class="modal-body">
+        <div class="table-wrap small-table">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 55px">#</th>
+                <th>标题</th>
+                <th style="width: 160px">GID / Token</th>
+                <th style="width: 100px">收藏夹</th>
+              </tr>
+            </thead>
+            <tbody id="galleryModalTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>

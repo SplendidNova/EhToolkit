@@ -1,0 +1,18 @@
+# 本地个人配置文件（含私人镜像站域名等自定义参数，避免上传至公开仓库泄露）
+settings.json
+
+# 插件导出的收藏夹备份与标签统计文件
+eh-favorites-backup-*.json
+eh-tag-stats-*.json
+eh-tag-stats-*.csv
+
+# 浏览器扩展打包产物与私钥
+*.pem
+*.crx
+*.zip
+
+# 系统与编辑器临时文件
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

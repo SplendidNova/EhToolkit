@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "EH Toolkit - 收藏迁移 / 标签统计 / 域名转换",
+  "version": "1.2.0",
+  "description": "E-Hentai 与 ExHentai 辅助工具：10个收藏夹跨账号迁移、artist/group/parody 及自定义重点标签统计、外链自动转镜像站或表里站互转、快捷键复制转换画廊链接域名。",
+  "permissions": [
+    "storage",
+    "tabs",
+    "webNavigation",
+    "clipboardWrite",
+    "clipboardRead",
+    "scripting"
+  ],
+  "host_permissions": [
+    "https://e-hentai.org/*",
+    "https://*.e-hentai.org/*",
+    "https://exhentai.org/*",
+    "https://*.exhentai.org/*",
+    "https://*/*",
+    "http://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "EH Toolkit 控制面板",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://e-hentai.org/*",
+        "https://*.e-hentai.org/*",
+        "https://exhentai.org/*",
+        "https://*.exhentai.org/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "commands": {
+    "copy-converted-url": {
+      "suggested_key": {
+        "default": "Alt+C",
+        "windows": "Alt+C",
+        "mac": "Alt+C",
+        "linux": "Alt+C"
+      },
+      "description": "复制并转换当前画廊链接域名 (e-hentai ↔ exhentai)"
+    }
+  }
+}

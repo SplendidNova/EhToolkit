@@ -1,0 +1,62 @@
+{
+  "settingsVersion": 3,
+  "features": {
+    "enableFavTransfer": true,
+    "enableTagStats": true,
+    "enableMirrorRedirect": false,
+    "enableShortcutCopy": true,
+    "enableDomainSwapRedirect": false
+  },
+  "redirect": {
+    "mirrorDomain": "",
+    "mirrorSourceScope": "both",
+    "domainSwapRedirectMode": "e2ex",
+    "redirectPriority": "mirror",
+    "redirectExternalOnly": true,
+    "redirectDedupWindowMs": 6000
+  },
+  "shortcutCopy": {
+    "copyTargetDomain": "exhentai.org",
+    "mirrorCopyTarget": "exhentai.org",
+    "customShortcut": {
+      "altKey": true,
+      "ctrlKey": false,
+      "shiftKey": false,
+      "metaKey": false,
+      "code": "KeyC",
+      "key": "c",
+      "label": "Alt + C"
+    },
+    "copyDedupWindowMs": 400,
+    "toastDurationMs": 3200,
+    "toastErrorDurationMs": 7000,
+    "badgeClearDelayMs": 2600
+  },
+  "favorites": {
+    "defaultActiveSite": "https://exhentai.org",
+    "readDelayMs": 350,
+    "readDelayMinMs": 100,
+    "importDelayMs": 400,
+    "importDelayMinMs": 150,
+    "importReverseOrder": true,
+    "importSkipExisting": true,
+    "importSaveEveryN": 10,
+    "favPreviewLimit": 300
+  },
+  "tagStats": {
+    "officialApiUrl": "https://api.e-hentai.org/api.php",
+    "apiBatchSize": 25,
+    "tagDelayMs": 600,
+    "tagDelayMinMs": 200,
+    "tagCooldownEveryBatches": 5,
+    "tagCooldownExtraMs": 2000,
+    "highlightTags": [
+      "female:stocking",
+      "female:stockings"
+    ],
+    "highlightTagLabel": "female:stocking(s)"
+  },
+  "tester": {
+    "sampleGalleryPath": "/g/1000000/0123456789/"
+  }
+}
